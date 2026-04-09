@@ -289,12 +289,19 @@ Override: `TERM_WIDTH=150 claude`
 - [Issue #21586](https://github.com/anthropics/claude-code/issues/21586) -- Original regression (partially fixed for IDE only)
 - [OSC 8 spec](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) -- Terminal hyperlink standard
 
+### Known Limitation: Rate Limit Data Freshness
+
+Rate limit values (5h/7d) update only after each Claude assistant response, not in real-time. They may appear stale when Claude Code is idle compared to Claude Desktop or claude.ai. This is a Claude Code platform limitation, not a bug in this statusline.
+
+See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md) for full details, alternatives considered, and upstream issue tracking.
+
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | Statusline not showing | Check `settings.json` has `statusLine` config. Start a new session. |
 | Rate limits show `--` | Rate limit data arrives after first API response. Shows `--` placeholder until then. Requires Pro/Max. |
+| Rate limits seem stale | Values update only after each assistant response, not in real-time. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
 | Branch link not clickable | Auto-disabled on unsupported terminals (WSL conhost). Use Windows Terminal or `FORCE_HYPERLINK=1 claude`. |
 | Git info stale | Decrease `GIT_CACHE_TTL` or `rm -rf /tmp/claude-statusline/` |
