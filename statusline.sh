@@ -21,7 +21,9 @@ SHOW_MODEL=true
 SHOW_TOKENS=true
 SHOW_GIT=true
 SHOW_FOLDER=true
-SHOW_THINKING=true
+SHOW_THINKING=true   # thinking + effort combined block
+SHOW_EFFORT=true     # part of thinking+effort block
+SHOW_OUTPUT_STYLE=true
 SHOW_AGENT=true
 SHOW_VIM_MODE=true
 SHOW_VERSION=true
@@ -122,14 +124,16 @@ eval "$(printf '%s' "$INPUT" | jq -r '
   "RATE_5H_PCT=" + (.rate_limits.five_hour.used_percentage // -1 | tostring),
   "RATE_5H_RESETS=" + (.rate_limits.five_hour.resets_at // 0 | tostring),
   "RATE_7D_PCT=" + (.rate_limits.seven_day.used_percentage // -1 | tostring),
-  "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // 0 | tostring)
+  "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // 0 | tostring),
+  "OUTPUT_STYLE=" + (.output_style.name // "" | s),
+  "IS_THINKING=" + (.is_thinking // .thinking // .alwaysThinkingEnabled // "unknown" | tostring)
 ' 2>/dev/null)" || true
 
 # Defaults for unparseable input
 : "${MODEL_DISPLAY:=Unknown}" "${CWD:=}" "${CTX_SIZE:=0}" "${USED_PCT:=0}"
 : "${INPUT_TOKENS:=0}" "${TOTAL_COST:=0}" "${TOTAL_DURATION_MS:=0}"
 : "${LINES_ADDED:=0}" "${LINES_REMOVED:=0}"
-: "${RATE_5H_PCT:=-1}" "${RATE_7D_PCT:=-1}"
+: "${RATE_5H_PCT:=-1}" "${RATE_7D_PCT:=-1}" "${OUTPUT_STYLE:=}" "${IS_THINKING:=unknown}"
 
 # ===========================================================================
 # Terminal width detection
@@ -432,24 +436,69 @@ render_folder() {
     printf '%b' "$folder_text"
 }
 
-render_thinking() {
-    $SHOW_THINKING || return
-    # Cache the settings read once per execution
-    if [[ -z "${_THINKING_CACHED:-}" ]]; then
-        _THINKING_ON=false
-        local settings_file="$HOME/.claude/settings.json"
-        if [[ -f "$settings_file" ]]; then
-            local val
-            val=$(jq -r '.alwaysThinkingEnabled // false' "$settings_file" 2>/dev/null)
-            [[ "$val" == "true" ]] && _THINKING_ON=true
-        fi
-        _THINKING_CACHED=1
+# Combined thinking + effort: 🧠  ◆ thinking ~ ◕ high
+render_thinking_effort() {
+    ($SHOW_THINKING || $SHOW_EFFORT) || return
+    # ── thinking: from JSON IS_THINKING, fall back to settings files ──
+    local thinking_val="$IS_THINKING"
+    if [[ "$thinking_val" == "unknown" ]]; then
+        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+                  "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+            [[ -f "$f" ]] || continue
+            thinking_val=$(jq -r 'if has("alwaysThinkingEnabled") then (.alwaysThinkingEnabled | tostring) else empty end' "$f" 2>/dev/null)
+            [[ -n "$thinking_val" ]] && break
+        done
     fi
-    if $_THINKING_ON; then
-        printf '%b◆ thinking%b' "$C_MAGENTA" "$C_RESET"
+    local thinking_icon thinking_color
+    if [[ "$thinking_val" == "true" ]]; then
+        thinking_icon="◆"; thinking_color="$C_MAGENTA"
     else
-        printf '%b◇ thinking%b' "$C_DIM" "$C_RESET"
+        thinking_icon="◇"; thinking_color="$C_DIM"
     fi
+    # ── effort: from settings files ──────────────────────────────
+    local level=""
+    for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+              "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+        [[ -f "$f" ]] || continue
+        level=$(jq -r 'if has("effortLevel") then .effortLevel else empty end' "$f" 2>/dev/null)
+        [[ -n "$level" ]] && break
+    done
+    [[ -z "$level" ]] && level="auto"
+    local effort_icon
+    case "$level" in
+        auto)   effort_icon="◎" ;;
+        low)    effort_icon="◔" ;;
+        medium) effort_icon="◑" ;;
+        high)   effort_icon="◕" ;;
+        max)    effort_icon="●" ;;
+        *)      effort_icon="◎"; level="auto" ;;
+    esac
+    printf '🧠  %b%s thinking%b' "$thinking_color" "$thinking_icon" "$C_RESET"
+    printf ' %b~%b %b%s %s%b' "$C_DIM" "$C_RESET" "$C_DIM" "$effort_icon" "$level" "$C_RESET"
+}
+
+render_output_style() {
+    $SHOW_OUTPUT_STYLE || return
+    # Use live JSON OUTPUT_STYLE first (always reflects session state)
+    local style="$OUTPUT_STYLE"
+    # Fall back to settings.local.json if JSON has no value
+    if [[ -z "$style" ]]; then
+        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json"; do
+            [[ -f "$f" ]] || continue
+            local v
+            v=$(jq -r 'if has("outputStyle") then .outputStyle else empty end' "$f" 2>/dev/null)
+            [[ -n "$v" ]] && style="$v" && break
+        done
+    fi
+    [[ -z "$style" ]] && style="default"
+    local icon label
+    case "$style" in
+        [Dd]efault)     icon="⚙️";  label="default" ;;
+        [Ee]xplanatory) icon="🔎";  label="explanatory" ;;
+        [Ll]earning)    icon="🎓";  label="learning" ;;
+        *)              icon="⚙️";  label="${style,,}" ;;
+    esac
+    printf '%s  %b%s%b' "$icon" "$C_DIM" "$label" "$C_RESET"
 }
 
 render_agent() {
@@ -612,7 +661,7 @@ assemble_line() {
 # ===========================================================================
 # Line layouts per mode
 # ===========================================================================
-# L1: model | tokens | git(branch ✔/⚠ ↑N↓N) | folder | thinking | agent | vim | version
+# L1: model | tokens | git(branch ✔/⚠ ↑N↓N) | folder | thinking~effort | output_style | agent | vim | version
 # L2: s-id ~ s-name | cost: $X ~ duration ~ +N/-N | 5h rate | 7d rate
 # L3: worktree (name - path - branch)
 
@@ -620,14 +669,14 @@ declare -a L1=() L2=() L3=()
 
 case "$STATUSLINE_LINES" in
     1)
-        L1=(render_model render_tokens render_git render_folder render_thinking render_agent render_vim render_version render_session_ids render_cost_group)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version render_session_ids render_cost_group)
         ;;
     2)
-        L1=(render_model render_tokens render_git render_folder render_thinking render_agent render_vim render_version)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         ;;
     *)
-        L1=(render_model render_tokens render_git render_folder render_thinking render_agent render_vim render_version)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         L3=(render_worktree)
         ;;

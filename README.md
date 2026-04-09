@@ -20,30 +20,30 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 **1-line** (`STATUSLINE_LINES=1`):
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔ PR#42 ✔ | myapp | ◆ thinking | vim:N | v2.1.97 | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔ PR#42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🔎  explanatory | vim:N | v2.1.97 | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
 ```
 
 **2-line** (`STATUSLINE_LINES=2`, default):
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ⚠ ↑2↓1 PR#42 ✔ | myapp | ◆ thinking | agent:review | vim:N | v2.1.97
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ⚠ ↑2↓1 PR#42 ✔ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | agent:review | vim:N | v2.1.97
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
 ```
 
 **2-line** (fresh session, minimal data):
 ```
-◆ Opus 4.6 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch ⚠ | myapp | ◆ thinking | v2.1.97
+◆ Opus 4.6 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch ⚠ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | v2.1.97
 s-id:536ea9b1 ~ s-name:-- | cost: -- ~ 1s ~ -- | 5h -- | 7d --
 ```
 
 **2-line** (high usage):
 ```
-◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠ | ⎇ main ✔ | myapp | ◆ thinking | v2.1.97
+◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max | ⚙️  default | v2.1.97
 s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 5h ██░░░░░░░░ 25% ↺~2h54m | 7d █████████░ 91% ↺~21h54m
 ```
 
 **3-line** (`STATUSLINE_LINES=3`):
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ⚠ ↑2↓1 PR#42 ✔ | myapp | ◆ thinking | agent:review | vim:N | v2.1.97
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ⚠ ↑2↓1 PR#42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🎓  learning | agent:review | vim:N | v2.1.97
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
 wt: name:feat-auth - path:~/.claude/worktrees/feat-auth - branch:worktree-feat-auth
 ```
@@ -67,11 +67,55 @@ wt: name:feat-auth - path:~/.claude/worktrees/feat-auth - branch:worktree-feat-a
 | PR mergeable | `✔` after PR# | PR can be merged (no conflicts) | green | `SHOW_PR` |
 | PR conflicting | `✗` after PR# | PR has merge conflicts | red | `SHOW_PR` |
 | Folder | `myapp` | Workspace directory basename (clickable to full path) | white | `SHOW_FOLDER` |
-| Thinking on | `◆ thinking` | Extended thinking is enabled | magenta | `SHOW_THINKING` |
-| Thinking off | `◇ thinking` | Extended thinking is disabled | dim | `SHOW_THINKING` |
+| Thinking + Effort | `🧠  ◆ thinking ~ ◕ high` | Combined block: thinking state and effort level | see below | `SHOW_THINKING` + `SHOW_EFFORT` |
+| Output style | `🔎  Explanatory` | Active output style (always shown) | dim label | `SHOW_OUTPUT_STYLE` |
 | Agent | `agent:review` | Agent name (only when `--agent` active) | dim + magenta | `SHOW_AGENT` |
 | Vim mode | `vim:N` / `vim:I` | Current vim mode | green=Normal, yellow=Insert | `SHOW_VIM_MODE` |
 | Version | `v2.1.97` | Claude Code version | dim | `SHOW_VERSION` |
+
+#### Thinking & Effort Detail
+
+Thinking and effort are rendered as a single combined block:
+
+```
+🧠  ◆ thinking ~ ◕ high     (thinking on, effort high)
+🧠  ◇ thinking ~ ◎ auto     (thinking off, effort auto/default)
+```
+
+**Thinking state** — `◆ thinking` when on, `◇ thinking` when off:
+
+Priority order for reading the state:
+1. `is_thinking` / `thinking` / `alwaysThinkingEnabled` field in the statusline JSON input (live session state, if Claude Code exposes it in a future version)
+2. `alwaysThinkingEnabled` in `.claude/settings.local.json` (project-level, written by `/config`)
+3. `alwaysThinkingEnabled` in `~/.claude/settings.local.json` (global local overrides)
+4. `alwaysThinkingEnabled` in `.claude/settings.json` (project-level)
+5. `alwaysThinkingEnabled` in `~/.claude/settings.json` (global)
+
+> **Known limitation:** Claude Code does **not** currently expose thinking state in the statusline JSON input. The `meta+t` shortcut toggles thinking in-memory only (not written to disk) — the statusline cannot detect this. You will see Claude Code's own "Thinking on / Thinking off" overlay at the right edge of the statusline, but our `◆`/`◇` indicator will not change.
+>
+> Toggling via `/config` **does** write to `settings.local.json` and will be reflected after the next assistant response.
+
+**Effort level** (read from `effortLevel` in settings files, same priority order minus JSON):
+
+| Value | Icon | Note |
+|-------|------|------|
+| absent / `auto` | `◎` | Default — Claude chooses effort (equivalent to `high`) |
+| `low` | `◔` | Quick, minimal overhead |
+| `medium` | `◑` | Balanced |
+| `high` | `◕` | Thorough |
+| `max` | `●` | Maximum effort |
+
+Set via `/effort <level>` or `/config`. Setting to `auto` removes the key from settings entirely.
+
+#### Output Style Detail
+
+Always shown. Reads from `output_style.name` in the statusline JSON input (live), falling back to `outputStyle` in `settings.local.json`.
+
+| Style | Icon | Set via |
+|-------|------|---------|
+| `default` | `⚙️` | `/config` or absent |
+| `explanatory` | `🔎` | `/config` |
+| `learning` | `🎓` | `/config` |
 
 #### L2: Session Metadata
 
@@ -208,7 +252,9 @@ SHOW_MODEL=true
 SHOW_TOKENS=true
 SHOW_GIT=true
 SHOW_FOLDER=true
-SHOW_THINKING=true
+SHOW_THINKING=true      # thinking + effort combined block
+SHOW_EFFORT=true        # part of thinking+effort block
+SHOW_OUTPUT_STYLE=true
 SHOW_AGENT=true
 SHOW_VIM_MODE=true
 SHOW_VERSION=true
@@ -226,7 +272,7 @@ SHOW_CLICKABLE_LINKS=true
 Elements are grouped by line in arrays at the bottom of the script:
 
 ```bash
-L1=(render_model render_tokens render_git render_folder render_thinking render_agent render_vim render_version)
+L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
 L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
 L3=(render_worktree)
 ```
@@ -311,6 +357,9 @@ See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md) for full detail
 | ✔/⚠ not showing | Only appears when CWD is a git repository with cached status. |
 | PR# not showing | Requires `gh` CLI installed and authenticated. Hidden when no PR exists for branch. |
 | PR ✔/✗ not showing | Merge status requires GitHub to compute mergeability. Shows nothing if status is `UNKNOWN`. |
+| `◆`/`◇ thinking` not updating on `meta+t` | `meta+t` is in-memory only — not written to disk and not exposed in the statusline JSON. Claude Code shows its own "Thinking on/off" overlay instead. Use `/config` to toggle persistently — it writes to `settings.local.json` and the indicator updates after the next response. |
+| Effort level not showing | Set via `/effort <level>` or `/config`. `auto` removes the key (shows `◎ auto`). |
+| Output style not showing | Reads from `output_style.name` in JSON input. Ensure Claude Code v2.1+ and start a fresh session. |
 
 ## Uninstall
 
