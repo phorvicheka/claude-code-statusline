@@ -186,11 +186,11 @@ build_bar() {
     local empty=$(( width - filled ))
     local color
     color=$(pct_color "$pct")
-    local bar=""
-    local i
-    for (( i = 0; i < filled; i++ )); do bar+="█"; done
-    for (( i = 0; i < empty; i++ ));  do bar+="░"; done
-    printf '%b%s%b' "$color" "$bar" "$C_RESET"
+    # Build bar string without per-char loop
+    local filled_str="" empty_str=""
+    (( filled > 0 )) && printf -v filled_str '%*s' "$filled" '' && filled_str="${filled_str// /█}"
+    (( empty  > 0 )) && printf -v empty_str  '%*s' "$empty"  '' && empty_str="${empty_str// /░}"
+    printf '%b%s%s%b' "$color" "$filled_str" "$empty_str" "$C_RESET"
 }
 
 fmt_tokens() {
@@ -503,13 +503,12 @@ render_cost_group() {
     # Cost (show -- when $0 or empty)
     local cost_val="$TOTAL_COST"
     local has_cost=false
-    if [[ -n "$cost_val" && "$cost_val" != "0" ]]; then
-        local cost_check
-        cost_check=$(awk "BEGIN {v=$cost_val+0; print (v > 0.0001) ? 1 : 0}")
-        if [[ "$cost_check" == "1" ]]; then
+    if [[ -n "$cost_val" && "$cost_val" != "0" && "$cost_val" != "0.0" ]]; then
+        # Use awk only once for both check and format
+        local cost_fmt
+        cost_fmt=$(awk "BEGIN {v=$cost_val+0; if (v > 0.0001) printf \"\$%.2f\", v; else print \"\"}")
+        if [[ -n "$cost_fmt" ]]; then
             has_cost=true
-            local cost_fmt
-            cost_fmt=$(awk "BEGIN {printf \"\$%.2f\", $cost_val}")
             parts+=("${C_DIM}${cost_fmt}${C_RESET}")
         fi
     fi
@@ -538,44 +537,34 @@ render_cost_group() {
     printf '%b' "$out"
 }
 
-render_rate_5h() {
-    $SHOW_RATE_LIMITS || return
-    local pct_int
-    pct_int=$(awk "BEGIN {printf \"%.0f\", ${RATE_5H_PCT} + 0}")
+_render_rate() {
+    local label="$1" raw_pct="$2" resets_at="$3"
+    local pct_int="${raw_pct%.*}"
+    pct_int="${pct_int:-0}"
     if (( pct_int < 0 )); then
-        printf '%b5h --%b' "$C_DIM" "$C_RESET"
+        printf '%b%s --%b' "$C_DIM" "$label" "$C_RESET"
         return
     fi
     local bar pct_c
     bar=$(build_bar "$pct_int" "$_rate_bar")
     pct_c=$(pct_color "$pct_int")
-    local out="${C_DIM}5h${C_RESET} ${bar} ${pct_c}${pct_int}%${C_RESET}"
+    local out="${C_DIM}${label}${C_RESET} ${bar} ${pct_c}${pct_int}%${C_RESET}"
     if [[ "$TIER" == "full" || "$TIER" == "wide" ]]; then
         local reset_str
-        reset_str=$(fmt_reset_time "$RATE_5H_RESETS")
+        reset_str=$(fmt_reset_time "$resets_at")
         [[ -n "$reset_str" ]] && out+=" ${C_DIM}${reset_str}${C_RESET}"
     fi
     printf '%b' "$out"
 }
 
+render_rate_5h() {
+    $SHOW_RATE_LIMITS || return
+    _render_rate "5h" "$RATE_5H_PCT" "$RATE_5H_RESETS"
+}
+
 render_rate_7d() {
     $SHOW_RATE_LIMITS || return
-    local pct_int
-    pct_int=$(awk "BEGIN {printf \"%.0f\", ${RATE_7D_PCT} + 0}")
-    if (( pct_int < 0 )); then
-        printf '%b7d --%b' "$C_DIM" "$C_RESET"
-        return
-    fi
-    local bar pct_c
-    bar=$(build_bar "$pct_int" "$_rate_bar")
-    pct_c=$(pct_color "$pct_int")
-    local out="${C_DIM}7d${C_RESET} ${bar} ${pct_c}${pct_int}%${C_RESET}"
-    if [[ "$TIER" == "full" || "$TIER" == "wide" ]]; then
-        local reset_str
-        reset_str=$(fmt_reset_time "$RATE_7D_RESETS")
-        [[ -n "$reset_str" ]] && out+=" ${C_DIM}${reset_str}${C_RESET}"
-    fi
-    printf '%b' "$out"
+    _render_rate "7d" "$RATE_7D_PCT" "$RATE_7D_RESETS"
 }
 
 # Worktree: name, path, branch (clickable branch link)
@@ -589,6 +578,7 @@ render_worktree() {
     fi
     if [[ -n "$WORKTREE_BRANCH" ]]; then
         local branch_text="${C_BLUE}${WORKTREE_BRANCH}${C_RESET}"
+        # _CACHED_REMOTE is set by render_git (L1 always runs before L3)
         if [[ -n "${_CACHED_REMOTE:-}" ]]; then
             branch_text=$(make_link "${_CACHED_REMOTE}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${WORKTREE_BRANCH}${C_RESET}")
         fi
