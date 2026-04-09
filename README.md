@@ -272,6 +272,23 @@ Override: `TERM_WIDTH=150 claude`
 
 **Click**: Cmd+click (macOS) or Ctrl+click (Linux/Windows)
 
+### Known Issue: Clickable Links Not Working
+
+**Status**: Claude Code has a [known bug](https://github.com/anthropics/claude-code/issues/26356) where the Ink renderer strips OSC 8 hyperlink escape sequences during re-rendering. This affects all real terminal emulators (Windows Terminal, iTerm2, Konsole, etc.).
+
+- Links work correctly in IDE terminals (VS Code, Cursor) since v2.1.42
+- Links are stripped by Ink before reaching the terminal in standalone mode
+- Our escape sequences (`\033]8;;URL\aTEXT\033]8;;\a`) are correct per spec
+- A [PTY wrapper workaround](https://github.com/anthropics/claude-code/issues/26356#issuecomment-4094257217) exists but adds Python dependency
+- The proper fix requires an upstream change in Claude Code
+
+**What this means**: The link escape codes are in our script and ready to work. Once Anthropic fixes the Ink renderer, clickable links will automatically start working without any changes to this statusline.
+
+**References**:
+- [Issue #26356](https://github.com/anthropics/claude-code/issues/26356) -- OSC 8 hyperlinks stripped in real terminals
+- [Issue #21586](https://github.com/anthropics/claude-code/issues/21586) -- Original regression (partially fixed for IDE only)
+- [OSC 8 spec](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) -- Terminal hyperlink standard
+
 ## Troubleshooting
 
 | Issue | Solution |
