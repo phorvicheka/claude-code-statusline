@@ -2,6 +2,8 @@
 
 A multi-line, adaptive-width status line for Claude Code with configurable elements, clickable GitHub links, and color-coded progress bars.
 
+![Claude Code Statusline screenshot](docs/screenshot.png)
+
 ## Features
 
 - **3 display modes**: 1-line (compact), 2-line (default), 3-line (full)
