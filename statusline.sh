@@ -14,14 +14,16 @@ set -f  # disable globbing
 # ===========================================================================
 
 # ── Line count (override via env: STATUSLINE_LINES=3 claude) ──
-STATUSLINE_LINES="${STATUSLINE_LINES:-2}"  # 1, 2, or 3
+STATUSLINE_LINES="${STATUSLINE_LINES:-3}"  # 1, 2, or 3
 
 # ── Feature toggles (set false to hide any element) ──
 SHOW_MODEL=true
 SHOW_TOKENS=true
 SHOW_GIT=true
 SHOW_FOLDER=true
-SHOW_THINKING=true
+SHOW_THINKING=true   # thinking + effort combined block
+SHOW_EFFORT=true     # part of thinking+effort block
+SHOW_OUTPUT_STYLE=true
 SHOW_AGENT=true
 SHOW_VIM_MODE=true
 SHOW_VERSION=true
@@ -50,7 +52,7 @@ if [[ "${FORCE_HYPERLINK:-0}" != "1" ]] && $SHOW_CLICKABLE_LINKS; then
 fi
 
 # ── Sizing ──
-GIT_CACHE_TTL=10        # seconds to cache git status
+GIT_CACHE_TTL=5         # seconds to cache git status
 MAX_BRANCH_LEN=40       # truncate branch names beyond this
 TOKEN_BAR_WIDTH=10      # context bar width in characters
 RATE_BAR_WIDTH=10       # rate limit bar width in characters
@@ -122,14 +124,16 @@ eval "$(printf '%s' "$INPUT" | jq -r '
   "RATE_5H_PCT=" + (.rate_limits.five_hour.used_percentage // -1 | tostring),
   "RATE_5H_RESETS=" + (.rate_limits.five_hour.resets_at // 0 | tostring),
   "RATE_7D_PCT=" + (.rate_limits.seven_day.used_percentage // -1 | tostring),
-  "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // 0 | tostring)
+  "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // 0 | tostring),
+  "OUTPUT_STYLE=" + (.output_style.name // "" | s),
+  "IS_THINKING=" + (.is_thinking // .thinking // .alwaysThinkingEnabled // "unknown" | tostring)
 ' 2>/dev/null)" || true
 
 # Defaults for unparseable input
 : "${MODEL_DISPLAY:=Unknown}" "${CWD:=}" "${CTX_SIZE:=0}" "${USED_PCT:=0}"
 : "${INPUT_TOKENS:=0}" "${TOTAL_COST:=0}" "${TOTAL_DURATION_MS:=0}"
 : "${LINES_ADDED:=0}" "${LINES_REMOVED:=0}"
-: "${RATE_5H_PCT:=-1}" "${RATE_7D_PCT:=-1}"
+: "${RATE_5H_PCT:=-1}" "${RATE_7D_PCT:=-1}" "${OUTPUT_STYLE:=}" "${IS_THINKING:=unknown}"
 
 # ===========================================================================
 # Terminal width detection
@@ -354,7 +358,7 @@ render_tokens() {
     used_fmt=$(fmt_tokens "$INPUT_TOKENS")
     max_fmt=$(fmt_tokens "$CTX_SIZE")
     pct_c=$(pct_color "$pct_int")
-    local out="${bar} ${pct_c}${pct_int}%${C_RESET} ${C_MAGENTA}${used_fmt}${C_DIM}/${C_RESET}${C_WHITE}${max_fmt}${C_RESET}"
+    local out="${bar} ${pct_c}${pct_int}%${C_RESET} ${C_WHITE}${used_fmt}${C_DIM}/${max_fmt}${C_RESET}"
     [[ "$EXCEEDS_200K" == "true" ]] && out+=" ${C_RED}⚠${C_RESET}"
     printf '%b' "$out"
 }
@@ -371,8 +375,6 @@ render_git() {
     if [[ -n "$git_info" ]]; then
         IFS=$'\t' read -r g_branch g_dirty g_ahead g_behind g_remote g_pr_num g_pr_url g_pr_merge <<< "$git_info"
     fi
-    # Cache remote URL for render_worktree to avoid duplicate get_git_info call
-    _CACHED_REMOTE="$g_remote"
 
     # Worktree branch overrides
     [[ -n "$WORKTREE_BRANCH" ]] && g_branch="$WORKTREE_BRANCH"
@@ -389,9 +391,9 @@ render_git() {
 
     local out="⎇ ${branch_text}"
 
-    # Dirty: ✔ green (clean), ⚠ yellow (dirty)
+    # Dirty: ✔ green (clean), 🛠️ yellow (dirty)
     if [[ "$g_dirty" == "dirty" ]]; then
-        out+=" ${C_YELLOW}⚠${C_RESET}"
+        out+=" ${C_YELLOW}🛠️${C_RESET}"
     elif [[ "$g_dirty" == "clean" ]]; then
         out+=" ${C_GREEN}✔${C_RESET}"
     fi
@@ -402,18 +404,19 @@ render_git() {
         (( ${g_behind:-0} > 0 )) && out+=" ${C_RED}↓${g_behind}${C_RESET}"
     fi
 
-    # PR number with merge status indicator
+    # PR number with merge status indicator: dim "PR " + yellow clickable "#N"
     if $SHOW_PR && [[ -n "$g_pr_num" ]]; then
-        local pr_text="${C_CYAN}PR#${g_pr_num}${C_RESET}"
+        local pr_num_text="${C_YELLOW}#${g_pr_num}${C_RESET}"
         if [[ -n "$g_pr_url" ]]; then
-            pr_text=$(make_link "$g_pr_url" "${C_CYAN}PR#${g_pr_num}${C_RESET}")
+            pr_num_text=$(make_link "$g_pr_url" "${C_YELLOW}#${g_pr_num}${C_RESET}")
         fi
+        local pr_text="${C_DIM}PR ${C_RESET}${pr_num_text}"
         # Merge status: ✔ green (mergeable), ✗ red (conflicting)
         case "${g_pr_merge}" in
             MERGEABLE)   pr_text+=" ${C_GREEN}✔${C_RESET}" ;;
             CONFLICTING) pr_text+=" ${C_RED}✗${C_RESET}" ;;
         esac
-        out+=" ${pr_text}"
+        out+=" ${TILDE}${pr_text}"
     fi
 
     printf '%b' "$out"
@@ -427,29 +430,87 @@ render_folder() {
     local basename="${dir##*/}"
     [[ -z "$basename" ]] && return
     # Clickable: click reveals full path via file:// URL
-    local folder_text="${C_WHITE}${basename}${C_RESET}"
+    local folder_text
     folder_text=$(make_link "file://${dir}" "${C_WHITE}${basename}${C_RESET}")
     printf '%b' "$folder_text"
 }
 
-render_thinking() {
-    $SHOW_THINKING || return
-    # Cache the settings read once per execution
-    if [[ -z "${_THINKING_CACHED:-}" ]]; then
-        _THINKING_ON=false
-        local settings_file="$HOME/.claude/settings.json"
-        if [[ -f "$settings_file" ]]; then
-            local val
-            val=$(jq -r '.alwaysThinkingEnabled // false' "$settings_file" 2>/dev/null)
-            [[ "$val" == "true" ]] && _THINKING_ON=true
+# Combined thinking + effort: 🧠  ◆ thinking ~ ◕ high
+render_thinking_effort() {
+    ($SHOW_THINKING || $SHOW_EFFORT) || return
+
+    # ── thinking: from JSON IS_THINKING, fall back to settings files ──
+    local thinking_icon="" thinking_color=""
+    if $SHOW_THINKING; then
+        local thinking_val="$IS_THINKING"
+        if [[ "$thinking_val" == "unknown" ]]; then
+            for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+                      "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+                [[ -f "$f" ]] || continue
+                thinking_val=$(jq -r 'if has("alwaysThinkingEnabled") then (.alwaysThinkingEnabled | tostring) else empty end' "$f" 2>/dev/null)
+                [[ -n "$thinking_val" ]] && break
+            done
         fi
-        _THINKING_CACHED=1
+        if [[ "$thinking_val" == "true" ]]; then
+            thinking_icon="◆"; thinking_color="$C_MAGENTA"
+        else
+            thinking_icon="◇"; thinking_color="$C_DIM"
+        fi
     fi
-    if $_THINKING_ON; then
-        printf '%b◆ thinking%b' "$C_MAGENTA" "$C_RESET"
-    else
-        printf '%b◇ thinking%b' "$C_DIM" "$C_RESET"
+
+    # ── effort: from settings files ──────────────────────────────────
+    local effort_icon="" effort_color="" level=""
+    if $SHOW_EFFORT; then
+        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+                  "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+            [[ -f "$f" ]] || continue
+            level=$(jq -r 'if has("effortLevel") then .effortLevel else empty end' "$f" 2>/dev/null)
+            [[ -n "$level" ]] && break
+        done
+        [[ -z "$level" ]] && level="auto"
+        case "$level" in
+            auto)   effort_icon="◎"; effort_color="$C_DIM" ;;
+            low)    effort_icon="◔"; effort_color="$C_WHITE" ;;
+            medium) effort_icon="◑"; effort_color="$C_WHITE" ;;
+            high)   effort_icon="◕"; effort_color="$C_WHITE" ;;
+            max)    effort_icon="●"; effort_color="$C_MAGENTA" ;;
+            *)      effort_icon="◎"; effort_color="$C_DIM"; level="auto" ;;
+        esac
     fi
+
+    # ── render ────────────────────────────────────────────────────────
+    printf '🧠 '
+    if [[ -n "$thinking_icon" ]]; then
+        printf ' %b%s thinking%b' "$thinking_color" "$thinking_icon" "$C_RESET"
+    fi
+    if [[ -n "$effort_icon" ]]; then
+        [[ -n "$thinking_icon" ]] && printf ' %b~%b' "$C_DIM" "$C_RESET"
+        printf ' %b%s %s%b' "$effort_color" "$effort_icon" "$level" "$C_RESET"
+    fi
+}
+
+render_output_style() {
+    $SHOW_OUTPUT_STYLE || return
+    # Use live JSON OUTPUT_STYLE first (always reflects session state)
+    local style="$OUTPUT_STYLE"
+    # Fall back to settings.local.json if JSON has no value
+    if [[ -z "$style" ]]; then
+        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json"; do
+            [[ -f "$f" ]] || continue
+            local v
+            v=$(jq -r 'if has("outputStyle") then .outputStyle else empty end' "$f" 2>/dev/null)
+            [[ -n "$v" ]] && style="$v" && break
+        done
+    fi
+    [[ -z "$style" ]] && style="default"
+    local icon label label_color="$C_DIM"
+    case "$style" in
+        [Dd]efault)     icon="⚙️";  label="default" ;;
+        [Ee]xplanatory) icon="🔎";  label="explanatory"; label_color="$C_WHITE" ;;
+        [Ll]earning)    icon="🎓";  label="learning";     label_color="$C_WHITE" ;;
+        *)              icon="⚙️";  label="${style,,}";   label_color="$C_WHITE" ;;
+    esac
+    printf '%s  %b%s%b' "$icon" "$label_color" "$label" "$C_RESET"
 }
 
 render_agent() {
@@ -509,7 +570,7 @@ render_cost_group() {
         cost_fmt=$(awk "BEGIN {v=$cost_val+0; if (v > 0.0001) printf \"\$%.2f\", v; else print \"\"}")
         if [[ -n "$cost_fmt" ]]; then
             has_cost=true
-            parts+=("${C_DIM}${cost_fmt}${C_RESET}")
+            parts+=("${C_WHITE}${cost_fmt}${C_RESET}")
         fi
     fi
     $has_cost || parts+=("${C_DIM}--${C_RESET}")
@@ -578,9 +639,14 @@ render_worktree() {
     fi
     if [[ -n "$WORKTREE_BRANCH" ]]; then
         local branch_text="${C_BLUE}${WORKTREE_BRANCH}${C_RESET}"
-        # _CACHED_REMOTE is set by render_git (L1 always runs before L3)
-        if [[ -n "${_CACHED_REMOTE:-}" ]]; then
-            branch_text=$(make_link "${_CACHED_REMOTE}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${WORKTREE_BRANCH}${C_RESET}")
+        # get_git_info result is cached so this is cheap
+        local wt_git_info remote_url=""
+        wt_git_info=$(get_git_info "$CWD")
+        if [[ -n "$wt_git_info" ]]; then
+            IFS=$'\t' read -r _ _ _ _ remote_url _ _ _ <<< "$wt_git_info"
+        fi
+        if [[ -n "$remote_url" ]]; then
+            branch_text=$(make_link "${remote_url}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${WORKTREE_BRANCH}${C_RESET}")
         fi
         out+=" ${C_DIM}- branch:${C_RESET}${branch_text}"
     fi
@@ -612,7 +678,7 @@ assemble_line() {
 # ===========================================================================
 # Line layouts per mode
 # ===========================================================================
-# L1: model | tokens | git(branch ✔/⚠ ↑N↓N) | folder | thinking | agent | vim | version
+# L1: model | tokens | git(branch ✔/🛠️ ↑N↓N) | folder | thinking~effort | output_style | agent | vim | version
 # L2: s-id ~ s-name | cost: $X ~ duration ~ +N/-N | 5h rate | 7d rate
 # L3: worktree (name - path - branch)
 
@@ -620,14 +686,14 @@ declare -a L1=() L2=() L3=()
 
 case "$STATUSLINE_LINES" in
     1)
-        L1=(render_model render_tokens render_git render_folder render_thinking render_agent render_vim render_version render_session_ids render_cost_group)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version render_session_ids render_cost_group)
         ;;
     2)
-        L1=(render_model render_tokens render_git render_folder render_thinking render_agent render_vim render_version)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         ;;
     *)
-        L1=(render_model render_tokens render_git render_folder render_thinking render_agent render_vim render_version)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         L3=(render_worktree)
         ;;
