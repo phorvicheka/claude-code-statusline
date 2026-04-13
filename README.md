@@ -20,17 +20,14 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ### Setup via Claude Code (Recommended)
 
-Open Claude Code **from the project directory** and paste this prompt:
+Paste this prompt into Claude Code:
 
 ```
-Please read the README.md in this directory, then:
-1. Check and install any missing requirements (bash 4+, jq, git required; gh CLI optional for PR display)
-2. Run `bash install.sh` from this directory to install interactively
-3. If install.sh fails, follow the Manual Install steps from the README
+Please check https://github.com/phorvicheka/claude-code-statusline, read the README.md, and follow the install steps.
 ```
 
-> **Not in the project directory?** Replace "this directory" with the full path, e.g.:
-> `Please read the README.md at /path/to/statusline-package, then run bash /path/to/statusline-package/install.sh ...`
+> **Already have the repo locally?** You can use this shorter prompt instead:
+> `Please read the README.md in this directory and follow the install steps.`
 
 ### Script Install
 
