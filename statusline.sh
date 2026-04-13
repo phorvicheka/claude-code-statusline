@@ -126,7 +126,9 @@ eval "$(printf '%s' "$INPUT" | jq -r '
   "RATE_7D_PCT=" + (.rate_limits.seven_day.used_percentage // -1 | tostring),
   "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // 0 | tostring),
   "OUTPUT_STYLE=" + (.output_style.name // "" | s),
-  "IS_THINKING=" + (.is_thinking // .thinking // .alwaysThinkingEnabled // "unknown" | tostring)
+  "IS_THINKING=" + (.is_thinking // .thinking // .alwaysThinkingEnabled // "unknown" | tostring),
+  "EFFORT_LEVEL_JSON=" + (.effort_level // .effortLevel // .effort // "" | s),
+  "TRANSCRIPT_PATH=" + (.transcript_path // "" | s)
 ' 2>/dev/null)" || true
 
 # Defaults for unparseable input
@@ -134,6 +136,7 @@ eval "$(printf '%s' "$INPUT" | jq -r '
 : "${INPUT_TOKENS:=0}" "${TOTAL_COST:=0}" "${TOTAL_DURATION_MS:=0}"
 : "${LINES_ADDED:=0}" "${LINES_REMOVED:=0}"
 : "${RATE_5H_PCT:=-1}" "${RATE_7D_PCT:=-1}" "${OUTPUT_STYLE:=}" "${IS_THINKING:=unknown}"
+: "${EFFORT_LEVEL_JSON:=}" "${TRANSCRIPT_PATH:=}"
 
 # ===========================================================================
 # Terminal width detection
@@ -458,15 +461,45 @@ render_thinking_effort() {
         fi
     fi
 
-    # ── effort: from settings files ──────────────────────────────────
+    # ── effort: JSON field → transcript → settings → env var ──
     local effort_icon="" effort_color="" level=""
     if $SHOW_EFFORT; then
-        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
-                  "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
-            [[ -f "$f" ]] || continue
-            level=$(jq -r 'if has("effortLevel") then .effortLevel else empty end' "$f" 2>/dev/null)
-            [[ -n "$level" ]] && break
-        done
+        # 1. JSON field from Claude Code (future-proof: not yet in schema)
+        level="$EFFORT_LEVEL_JSON"
+        # 2. Parse transcript JSONL for most recent /effort command output
+        #    Needed because "max" is session-only and never written to settings.json.
+        #    Only match <local-command-stdout> lines to avoid false positives from
+        #    agent output that might quote the effort text.
+        if [[ -z "$level" && -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
+            # Match only direct command output (content starts with the tag),
+            # not quoted text inside tool results or agent messages.
+            level=$(tac "$TRANSCRIPT_PATH" 2>/dev/null \
+                | grep -m1 '"content":"<local-command-stdout>[^"]*[Ee]ffort level' \
+                | grep -oP '(?:Set effort level to|Effort level set to) \K(low|medium|high|max|auto)' \
+                | head -1 || true)
+        fi
+        # 3. effortLevel key in settings JSON (persisted default)
+        if [[ -z "$level" ]]; then
+            for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+                      "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+                [[ -f "$f" ]] || continue
+                level=$(jq -r 'if has("effortLevel") then .effortLevel else empty end' "$f" 2>/dev/null)
+                [[ -n "$level" ]] && break
+            done
+        fi
+        # 4. Fall back to CLAUDE_CODE_EFFORT_LEVEL env var
+        if [[ -z "$level" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]]; then
+            level="$CLAUDE_CODE_EFFORT_LEVEL"
+        fi
+        # 5. Fall back to env var defined in settings.json env blocks
+        if [[ -z "$level" ]]; then
+            for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+                      "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+                [[ -f "$f" ]] || continue
+                level=$(jq -r '.env.CLAUDE_CODE_EFFORT_LEVEL // empty' "$f" 2>/dev/null)
+                [[ -n "$level" ]] && break
+            done
+        fi
         [[ -z "$level" ]] && level="auto"
         case "$level" in
             auto)   effort_icon="◎"; effort_color="$C_DIM" ;;

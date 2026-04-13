@@ -268,7 +268,12 @@ Read from (in priority order):
 
 > **Note:** `meta+t` toggles thinking in-memory only (not written to disk). Use `/config` to toggle persistently.
 
-**Effort level** -- read from `effortLevel` in settings files:
+**Effort level** -- read from (in priority order):
+1. `effort_level` / `effortLevel` / `effort` in statusline JSON (future-proof: not yet in schema)
+2. Transcript JSONL -- scans backward for the most recent `/effort` command output (catches session-only levels like `max`)
+3. `effortLevel` key in settings JSON (written by `/effort` for persistable levels)
+4. `CLAUDE_CODE_EFFORT_LEVEL` environment variable (runtime)
+5. `env.CLAUDE_CODE_EFFORT_LEVEL` in settings JSON `env` blocks
 
 | Value | Icon | Note |
 |-------|------|------|
@@ -276,9 +281,11 @@ Read from (in priority order):
 | `low` | `◔` | Quick, minimal overhead |
 | `medium` | `◑` | Balanced |
 | `high` | `◕` | Thorough |
-| `max` | `●` | Maximum effort |
+| `max` | `●` | Maximum effort (session-only -- not written to settings.json) |
 
 Set via `/effort <level>` or `/config`. Setting to `auto` removes the key from settings entirely.
+
+> **Note:** `/effort max` is session-only and does not persist to `settings.json`. The statusline detects it by parsing the transcript JSONL file. Avoid setting `CLAUDE_CODE_EFFORT_LEVEL` in `settings.json` `env` block — it overrides `/effort` at runtime.
 
 ### Output Style
 
@@ -321,7 +328,8 @@ All bars (context, 5h, 7d) use the same thresholds:
 | Width detection wrong | Override: `TERM_WIDTH=<cols>` in settings.json command. |
 | PR# not showing | Requires `gh` CLI installed and authenticated. Hidden when no PR exists for branch. |
 | Thinking not updating on `meta+t` | In-memory only -- not written to disk. Use `/config` to toggle persistently. |
-| Effort level not showing | Set via `/effort <level>` or `/config`. `auto` removes the key (shows `◎ auto`). |
+| Effort level not showing | Set via `/effort <level>` or `/config`. `auto` removes the key (shows `◎ auto`). `max` requires transcript parsing (needs `transcript_path` in JSON). |
+| Effort level stuck | Remove `CLAUDE_CODE_EFFORT_LEVEL` from `settings.json` `env` block — it overrides `/effort`. |
 | Output style not showing | Reads from JSON input. Ensure Claude Code v2.1+ and start a fresh session. |
 
 ## Uninstall
