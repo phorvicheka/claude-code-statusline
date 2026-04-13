@@ -34,7 +34,8 @@ command -v git  >/dev/null 2>&1 || missing+=("git")
 
 if (( ${#missing[@]} > 0 )); then
     error "Missing required tools: ${missing[*]}"
-    echo "  Install them before continuing."
+    echo "  Ubuntu/Debian/WSL: sudo apt install ${missing[*]}"
+    echo "  macOS:             brew install ${missing[*]}"
     exit 1
 fi
 
@@ -60,15 +61,15 @@ fi
 echo ""
 info "Choose your statusline mode:"
 echo "  1) 1-line  — compact: model, tokens, git, folder, thinking, cost"
-echo "  2) 2-line  — default: adds session IDs, cost group, rate limits"
-echo "  3) 3-line  — full: adds worktree details (name, path, branch)"
+echo "  2) 2-line  — adds session IDs, cost group, rate limits"
+echo "  3) 3-line  — full (default): adds worktree details (name, path, branch)"
 echo ""
-read -rp "Enter 1, 2, or 3 [default: 2]: " line_choice
-line_choice="${line_choice:-2}"
+read -rp "Enter 1, 2, or 3 [default: 3]: " line_choice
+line_choice="${line_choice:-3}"
 
 case "$line_choice" in
     1|2|3) ;;
-    *) warn "Invalid choice '$line_choice', using default (2)"; line_choice=2 ;;
+    *) warn "Invalid choice '$line_choice', using default (3)"; line_choice=3 ;;
 esac
 
 ok "Selected ${line_choice}-line mode"
@@ -91,10 +92,10 @@ chmod +x "$TARGET"
 # Set chosen line count in the script (cross-platform sed -i)
 if sed --version >/dev/null 2>&1; then
     # GNU sed (Linux/WSL)
-    sed -i "s/^STATUSLINE_LINES=\"\${STATUSLINE_LINES:-2}\"/STATUSLINE_LINES=\"\${STATUSLINE_LINES:-${line_choice}}\"/" "$TARGET"
+    sed -i "s/^STATUSLINE_LINES=\"\${STATUSLINE_LINES:-[0-9]}\"/STATUSLINE_LINES=\"\${STATUSLINE_LINES:-${line_choice}}\"/" "$TARGET"
 else
     # BSD sed (macOS)
-    sed -i '' "s/^STATUSLINE_LINES=\"\${STATUSLINE_LINES:-2}\"/STATUSLINE_LINES=\"\${STATUSLINE_LINES:-${line_choice}}\"/" "$TARGET"
+    sed -i '' "s/^STATUSLINE_LINES=\"\${STATUSLINE_LINES:-[0-9]}\"/STATUSLINE_LINES=\"\${STATUSLINE_LINES:-${line_choice}}\"/" "$TARGET"
 fi
 
 ok "Installed statusline.sh to ${TARGET}"

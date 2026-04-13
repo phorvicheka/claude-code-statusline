@@ -4,195 +4,57 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ![Claude Code Statusline screenshot](docs/screenshot.png)
 
-## Features
+## What You Get
 
-- **3 display modes**: 1-line (compact), 2-line, 3-line (default)
-- **Adaptive width**: Gracefully degrades on narrow terminals (full/wide/compact/narrow tiers)
-- **Color-coded bars**: Green (<50%) -> Yellow (50-74%) -> Red (>=75%) for context and rate limits
+- **3 display modes**: 1-line (compact), 2-line, or 3-line (default)
+- **Adaptive width**: Gracefully degrades across 4 terminal width tiers
+- **Color-coded progress bars**: Context window + rate limits (green/yellow/red)
 - **Model-colored names**: Amber (Opus), Blue (Sonnet), Cyan (Haiku)
-- **Clickable links**: Branch -> GitHub tree URL, Folder -> file:// full path (OSC 8)
-- **Git caching**: 5-second cache to avoid slow git operations
-- **Fully configurable**: Toggle any element on/off
-- **Conditional display**: Elements only appear when data is available
+- **Clickable links**: Branch -> GitHub, PR -> PR page, Folder -> full path
+- **Git status**: Branch, clean/dirty, ahead/behind, PR number + merge status
+- **Session info**: Cost, duration, lines changed, rate limits, worktree
+- **Thinking / Effort / Output style**: Live indicators for Claude's current mode
 - **Pure bash + jq**: No additional dependencies
-
-### Display Modes
-
-**1-line** (`STATUSLINE_LINES=1`):
-```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🔎  explanatory | vim:N | v2.1.97 | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
-```
-
-**2-line** (`STATUSLINE_LINES=2`):
-```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | agent:review | vim:N | v2.1.97
-s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
-```
-
-**2-line** (fresh session, minimal data):
-```
-◆ Opus 4.6 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch 🛠️ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | v2.1.97
-s-id:536ea9b1 ~ s-name:-- | cost: -- ~ 1s ~ -- | 5h -- | 7d --
-```
-
-**2-line** (high usage):
-```
-◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max | ⚙️  default | v2.1.97
-s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 5h ██░░░░░░░░ 25% ↺~2h54m | 7d █████████░ 91% ↺~21h54m
-```
-
-**3-line** (`STATUSLINE_LINES=3`, default):
-```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🎓  learning | agent:review | vim:N | v2.1.97
-s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
-wt: name:feat-auth - path:~/.claude/worktrees/feat-auth - branch:worktree-feat-auth
-```
-
-### Elements Reference
-
-#### L1: Identity & Context
-
-| Element | Example | Meaning | Color | Toggle |
-|---------|---------|---------|-------|--------|
-| Model | `◆ Opus 4.6` | Current Claude model | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_MODEL` |
-| Context bar | `████░░░░░░ 48%` | Context window used | green <50%, yellow 50-74%, red >=75% | `SHOW_TOKENS` |
-| Token counts | `395k/1.0m` | Used tokens / max tokens | white / dim | `SHOW_TOKENS` |
-| Context warning | `⚠` (red) | Total tokens exceed 200k (`exceeds_200k_tokens`) | red | `SHOW_TOKENS` |
-| Git branch | `⎇ feature/auth` | Current branch (clickable to GitHub tree) | blue | `SHOW_GIT` |
-| Git clean | `✔` | Working tree is clean (no changes) | green | `SHOW_GIT` |
-| Git dirty | `🛠️` | Working tree has uncommitted changes | yellow | `SHOW_GIT` |
-| Ahead | `↑2` | Commits ahead of upstream (hidden when 0) | green | `SHOW_GIT` |
-| Behind | `↓1` | Commits behind upstream (hidden when 0) | red | `SHOW_GIT` |
-| PR number | `PR #42` | Open PR for this branch (clickable `#N` to PR page) | dim label + yellow number | `SHOW_PR` |
-| PR mergeable | `✔` after PR | PR can be merged (no conflicts) | green | `SHOW_PR` |
-| PR conflicting | `✗` after PR | PR has merge conflicts | red | `SHOW_PR` |
-| Folder | `myapp` | Workspace directory basename (clickable to full path) | white | `SHOW_FOLDER` |
-| Thinking + Effort | `🧠  ◆ thinking ~ ◕ high` | Combined block: thinking state and effort level | see below | `SHOW_THINKING` + `SHOW_EFFORT` |
-| Output style | `🔎  explanatory` | Active output style (always shown) | dim for default, white for non-default | `SHOW_OUTPUT_STYLE` |
-| Agent | `agent:review` | Agent name (only when `--agent` active) | dim + magenta | `SHOW_AGENT` |
-| Vim mode | `vim:N` / `vim:I` | Current vim mode | green=Normal, yellow=Insert | `SHOW_VIM_MODE` |
-| Version | `v2.1.97` | Claude Code version | dim | `SHOW_VERSION` |
-
-#### Thinking & Effort Detail
-
-Thinking and effort are rendered as a single combined block:
-
-```
-🧠  ◆ thinking ~ ◕ high     (thinking on, effort high)
-🧠  ◇ thinking ~ ◎ auto     (thinking off, effort auto/default)
-```
-
-**Thinking state** — `◆ thinking` when on, `◇ thinking` when off:
-
-Priority order for reading the state:
-1. `is_thinking` / `thinking` / `alwaysThinkingEnabled` field in the statusline JSON input (live session state, if Claude Code exposes it in a future version)
-2. `alwaysThinkingEnabled` in `.claude/settings.local.json` (project-level, written by `/config`)
-3. `alwaysThinkingEnabled` in `~/.claude/settings.local.json` (global local overrides)
-4. `alwaysThinkingEnabled` in `.claude/settings.json` (project-level)
-5. `alwaysThinkingEnabled` in `~/.claude/settings.json` (global)
-
-> **Known limitation:** Claude Code does **not** currently expose thinking state in the statusline JSON input. The `meta+t` shortcut toggles thinking in-memory only (not written to disk) — the statusline cannot detect this. You will see Claude Code's own "Thinking on / Thinking off" overlay at the right edge of the statusline, but our `◆`/`◇` indicator will not change.
->
-> Toggling via `/config` **does** write to `settings.local.json` and will be reflected after the next assistant response.
-
-**Effort level** (read from `effortLevel` in settings files, same priority order minus JSON):
-
-| Value | Icon | Note |
-|-------|------|------|
-| absent / `auto` | `◎` | Default — Claude chooses effort (equivalent to `high`) |
-| `low` | `◔` | Quick, minimal overhead |
-| `medium` | `◑` | Balanced |
-| `high` | `◕` | Thorough |
-| `max` | `●` | Maximum effort |
-
-Set via `/effort <level>` or `/config`. Setting to `auto` removes the key from settings entirely.
-
-#### Output Style Detail
-
-Always shown. Reads from `output_style.name` in the statusline JSON input (live), falling back to `outputStyle` in `settings.local.json`.
-
-| Style | Icon | Set via |
-|-------|------|---------|
-| `default` | `⚙️` | `/config` or absent |
-| `explanatory` | `🔎` | `/config` |
-| `learning` | `🎓` | `/config` |
-
-#### L2: Session Metadata
-
-| Element | Example | Meaning | Color | Toggle |
-|---------|---------|---------|-------|--------|
-| Session ID | `s-id:536ea9b1` | First 8 chars of session ID | dim + white | `SHOW_SESSION_ID` |
-| Session name | `s-name:my-session` | Custom name (via `--name` or `/rename`), `--` when unset | dim + white | `SHOW_SESSION_NAME` |
-| Cost amount | `$1.23` | Session cost in USD, `--` when $0 | white | `SHOW_COST_GROUP` |
-| Duration | `12m34s` | Session wall-clock time, `--` when 0 | white | `SHOW_COST_GROUP` |
-| Lines changed | `+42/-8` | Lines added (green) / removed (red), `--` when 0 | green + red | `SHOW_COST_GROUP` |
-| 5h rate limit | `5h ███░░░ 38% ↺~2h14m` | 5-hour usage bar + reset countdown, `5h --` when no data | bar color + dim | `SHOW_RATE_LIMITS` |
-| 7d rate limit | `7d █░░░░ 18% ↺~4d` | 7-day usage bar + reset countdown, `7d --` when no data | bar color + dim | `SHOW_RATE_LIMITS` |
-
-#### L3: Worktree (3-line mode only)
-
-| Element | Example | Meaning | Color | Toggle |
-|---------|---------|---------|-------|--------|
-| Worktree name | `wt: name:feat-auth` | Active worktree name | dim + cyan | `SHOW_WORKTREE` |
-| Worktree path | `- path:/home/...` | Worktree directory path | dim + white | `SHOW_WORKTREE` |
-| Worktree branch | `- branch:wt-feat-auth` | Worktree git branch (clickable) | dim + blue | `SHOW_WORKTREE` |
-
-#### Progress Bar Colors
-
-All progress bars (context, 5h, 7d) use the same color thresholds:
-
-| Range | Color | Meaning |
-|-------|-------|---------|
-| 0-49% | Green | Safe |
-| 50-74% | Yellow | Moderate usage |
-| 75-100% | Red | High usage, approaching limit |
-
-#### Separators
-
-| Symbol | Usage |
-|--------|-------|
-| `\|` | Between element groups |
-| `~` | Between related items within a group (e.g., `s-id ~ s-name`, `cost ~ duration ~ lines`) |
-
-#### Placeholder Values
-
-When data is not yet available (e.g., fresh session), elements show `--`:
-
-```
-cost: -- ~ 1s ~ --          (no cost yet, has duration, no lines yet)
-5h --                        (rate limit data not loaded yet)
-7d --                        (rate limit data not loaded yet)
-s-name:--                    (no session name set)
-```
-
-## Requirements
-
-- **bash** 4.0+
-- **jq** (JSON processor)
-- **git** (for branch info)
-- **gh** (GitHub CLI, optional -- for PR# display)
 
 ## Quick Install
 
+### Setup via Claude Code (Recommended)
+
+Open Claude Code **from the project directory** and paste this prompt:
+
+```
+Please read the README.md in this directory, then:
+1. Check and install any missing requirements (bash 4+, jq, git required; gh CLI optional for PR display)
+2. Run `bash install.sh` from this directory to install interactively
+3. If install.sh fails, follow the Manual Install steps from the README
+```
+
+> **Not in the project directory?** Replace "this directory" with the full path, e.g.:
+> `Please read the README.md at /path/to/statusline-package, then run bash /path/to/statusline-package/install.sh ...`
+
+### Script Install
+
 ```bash
+cd /path/to/statusline-package
 bash install.sh
 ```
 
 The installer will:
-1. Check dependencies
-2. Ask you to choose a line count (1, 2, or 3)
+1. Check dependencies (bash 4+, jq, git; warns if gh is missing)
+2. Ask you to choose a line count (1, 2, or 3 -- default: 3)
 3. Back up any existing statusline.sh
-4. Install the new script
-5. Configure settings.json
+4. Install the script to `~/.claude/statusline.sh`
+5. Configure `~/.claude/settings.json`
 
-## Manual Install
+### Manual Install
 
 ```bash
-# 1. Copy the script
+# 1. Copy the script (from the project directory)
 cp statusline.sh ~/.claude/statusline.sh
 chmod +x ~/.claude/statusline.sh
 
-# 2. Add to settings.json (if not already configured)
+# 2. Configure settings.json
+# Add or merge into ~/.claude/settings.json:
 # {
 #   "statusLine": {
 #     "type": "command",
@@ -203,27 +65,14 @@ chmod +x ~/.claude/statusline.sh
 # 3. Start a new Claude Code session
 ```
 
-## Setup with Claude Code (Prompt)
+### Requirements
 
-Ask Claude Code to set it up for you. Copy and paste this prompt:
-
-```
-I have a statusline package at ~/.claude/statusline-package/ with a README.md.
-Please read the README.md first, then:
-1. Check and install any missing requirements (bash 4+, jq, git are required; gh CLI is optional for PR# display)
-   - On Ubuntu/Debian/WSL: sudo apt install jq git
-   - On macOS: brew install jq git
-   - gh CLI: https://cli.github.com/
-2. Run `bash ~/.claude/statusline-package/install.sh` to install interactively
-3. If install.sh fails or you prefer manual setup:
-   - Copy ~/.claude/statusline-package/statusline.sh to ~/.claude/statusline.sh and chmod +x it
-   - Make sure ~/.claude/settings.json has: {"statusLine": {"type": "command", "command": "bash ~/.claude/statusline.sh"}}
-   - Set STATUSLINE_LINES to my preferred line count (1, 2, or 3) at the top of the script
-```
+- **bash** 4.0+
+- **jq** (JSON processor)
+- **git** (for branch info)
+- **gh** (GitHub CLI, optional -- for PR# display)
 
 ## Configuration
-
-Edit the top of `~/.claude/statusline.sh` to customize:
 
 ### Line Count
 
@@ -231,21 +80,26 @@ Edit the top of `~/.claude/statusline.sh` to customize:
 STATUSLINE_LINES="${STATUSLINE_LINES:-3}"  # 1, 2, or 3
 ```
 
-Override at runtime: `STATUSLINE_LINES=3 claude`
+Edit at the top of `~/.claude/statusline.sh`, or override at runtime:
 
-Or in `~/.claude/settings.json`:
+```bash
+STATUSLINE_LINES=2 claude
+```
+
+Or set permanently in `~/.claude/settings.json`:
+
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "STATUSLINE_LINES=3 bash ~/.claude/statusline.sh"
+    "command": "STATUSLINE_LINES=2 bash ~/.claude/statusline.sh"
   }
 }
 ```
 
 ### Feature Toggles
 
-Set any to `false` to hide:
+Edit the top of `~/.claude/statusline.sh`. Set any to `false` to hide:
 
 ```bash
 SHOW_MODEL=true
@@ -267,7 +121,9 @@ SHOW_PR=true
 SHOW_CLICKABLE_LINKS=true
 ```
 
-### Line Layouts
+### Advanced Configuration
+
+#### Line Layouts
 
 Elements are grouped by line in arrays at the bottom of the script:
 
@@ -281,7 +137,7 @@ L3=(render_worktree)
 - **L2**: Session metadata (cost, limits, IDs)
 - **L3**: Worktree details (3-line mode only)
 
-### Sizing
+#### Sizing
 
 ```bash
 GIT_CACHE_TTL=5         # seconds to cache git status
@@ -292,74 +148,184 @@ THRESHOLD_GREEN=50      # below = green
 THRESHOLD_YELLOW=75     # below = yellow, above = red
 ```
 
-## Width Tiers
+#### Width Tiers
 
 | Tier | Width | Effect |
 |------|-------|--------|
 | full | >=140 chars | All elements, full labels, max bar widths |
-| wide | 100-139 | Smaller bars, branch max 30 chars, rate reset times shown |
+| wide | 100-139 | Smaller bars, branch max 30 chars |
 | compact | 76-99 | Compact bars, branch max 20 chars |
-| narrow | <76 | Forces single line, branch max 12 chars, compact bars |
+| narrow | <76 | Forces single line, branch max 12 chars |
 
 Override: `TERM_WIDTH=150 claude`
 
-## Clickable Links
+## Known Limitations
 
-- **Branch names**: Link to `https://github.com/{owner}/{repo}/tree/{branch}`
-- **PR numbers**: Link to `https://github.com/{owner}/{repo}/pull/{number}`
-- **Folder name**: Link to `file://{full_path}` (reveals full CWD on hover/click)
-- **Worktree branch**: Same GitHub link format
+### Clickable Links
 
-**Auto-detection**: Links are automatically disabled on terminals that don't support OSC 8 (e.g., WSL conhost.exe). They auto-enable on Windows Terminal (`WT_SESSION`), iTerm2, WezTerm, Kitty, and VS Code.
+Claude Code has a [known bug](https://github.com/anthropics/claude-code/issues/26356) where the Ink renderer strips OSC 8 hyperlink escape sequences. Links work in IDE terminals (VS Code, Cursor) since v2.1.42, but are stripped in standalone terminal mode.
+
+The escape sequences in this statusline are correct per spec. Once Anthropic fixes the Ink renderer, clickable links will work automatically without changes to this script.
 
 **Supported terminals**: iTerm2, Kitty, WezTerm, Windows Terminal, VS Code terminal
-
+**Not supported**: WSL default console, plain xterm, SSH sessions
+**Auto-detection**: Links are automatically disabled on unsupported terminals.
 **Force enable**: `FORCE_HYPERLINK=1 claude`
-
-**Not supported**: WSL default console (`wsl.exe -d Ubuntu`), plain xterm, SSH sessions
-
 **Click**: Cmd+click (macOS) or Ctrl+click (Linux/Windows)
 
-### Known Issue: Clickable Links Not Working
+References: [Issue #26356](https://github.com/anthropics/claude-code/issues/26356), [Issue #21586](https://github.com/anthropics/claude-code/issues/21586), [OSC 8 spec](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
 
-**Status**: Claude Code has a [known bug](https://github.com/anthropics/claude-code/issues/26356) where the Ink renderer strips OSC 8 hyperlink escape sequences during re-rendering. This affects all real terminal emulators (Windows Terminal, iTerm2, Konsole, etc.).
+### Rate Limit Data Freshness
 
-- Links work correctly in IDE terminals (VS Code, Cursor) since v2.1.42
-- Links are stripped by Ink before reaching the terminal in standalone mode
-- Our escape sequences (`\033]8;;URL\aTEXT\033]8;;\a`) are correct per spec
-- A [PTY wrapper workaround](https://github.com/anthropics/claude-code/issues/26356#issuecomment-4094257217) exists but adds Python dependency
-- The proper fix requires an upstream change in Claude Code
+Rate limit values (5h/7d) update only after each Claude assistant response, not in real-time. They may appear stale when idle. This is a Claude Code platform limitation, not a bug in this statusline.
 
-**What this means**: The link escape codes are in our script and ready to work. Once Anthropic fixes the Ink renderer, clickable links will automatically start working without any changes to this statusline.
+See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md) for details.
 
-**References**:
-- [Issue #26356](https://github.com/anthropics/claude-code/issues/26356) -- OSC 8 hyperlinks stripped in real terminals
-- [Issue #21586](https://github.com/anthropics/claude-code/issues/21586) -- Original regression (partially fixed for IDE only)
-- [OSC 8 spec](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda) -- Terminal hyperlink standard
+## Statusline Anatomy
 
-### Known Limitation: Rate Limit Data Freshness
+### Display Modes
 
-Rate limit values (5h/7d) update only after each Claude assistant response, not in real-time. They may appear stale when Claude Code is idle compared to Claude Desktop or claude.ai. This is a Claude Code platform limitation, not a bug in this statusline.
+**1-line** (`STATUSLINE_LINES=1`):
+```
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🔎  explanatory | vim:N | v2.1.97 | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
+```
 
-See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md) for full details, alternatives considered, and upstream issue tracking.
+**2-line** (`STATUSLINE_LINES=2`):
+```
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | agent:review | vim:N | v2.1.97
+s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
+```
+
+**3-line** (`STATUSLINE_LINES=3`, default):
+```
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🎓  learning | agent:review | vim:N | v2.1.97
+s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
+wt: name:feat-auth - path:~/.claude/worktrees/feat-auth - branch:worktree-feat-auth
+```
+
+**Fresh session** (minimal data):
+```
+◆ Opus 4.6 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch 🛠️ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | v2.1.97
+s-id:536ea9b1 ~ s-name:-- | cost: -- ~ 1s ~ -- | 5h -- | 7d --
+```
+
+**High usage**:
+```
+◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max | ⚙️  default | v2.1.97
+s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 5h ██░░░░░░░░ 25% ↺~2h54m | 7d █████████░ 91% ↺~21h54m
+```
+
+### Elements Reference
+
+#### L1: Identity & Context
+
+| Element | Example | Meaning | Color | Toggle |
+|---------|---------|---------|-------|--------|
+| Model | `◆ Opus 4.6` | Current Claude model | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_MODEL` |
+| Context bar | `████░░░░░░ 48%` | Context window used | green <50%, yellow 50-74%, red >=75% | `SHOW_TOKENS` |
+| Token counts | `395k/1.0m` | Used / max tokens | white / dim | `SHOW_TOKENS` |
+| Context warning | `⚠` | Exceeds 200k tokens | red | `SHOW_TOKENS` |
+| Git branch | `⎇ feature/auth` | Current branch (clickable) | blue | `SHOW_GIT` |
+| Git status | `✔` / `🛠️` | Clean / dirty working tree | green / yellow | `SHOW_GIT` |
+| Ahead/Behind | `↑2` `↓1` | Commits ahead/behind upstream | green / red | `SHOW_GIT` |
+| PR | `PR #42 ✔` | PR number + merge status (clickable) | dim + yellow | `SHOW_PR` |
+| Folder | `myapp` | Workspace basename (clickable) | white | `SHOW_FOLDER` |
+| Thinking + Effort | `🧠  ◆ thinking ~ ◕ high` | Thinking state + effort level | see below | `SHOW_THINKING` / `SHOW_EFFORT` |
+| Output style | `🔎  explanatory` | Active output style | dim (default) / white | `SHOW_OUTPUT_STYLE` |
+| Agent | `agent:review` | Active agent name | dim + magenta | `SHOW_AGENT` |
+| Vim mode | `vim:N` | Current vim mode | green=N, yellow=I | `SHOW_VIM_MODE` |
+| Version | `v2.1.97` | Claude Code version | dim | `SHOW_VERSION` |
+
+#### L2: Session Metadata
+
+| Element | Example | Meaning | Toggle |
+|---------|---------|---------|--------|
+| Session ID | `s-id:536ea9b1` | First 8 chars of session ID | `SHOW_SESSION_ID` |
+| Session name | `s-name:my-session` | Custom name (`--` if unset) | `SHOW_SESSION_NAME` |
+| Cost | `$1.23` | Session cost (`--` if $0) | `SHOW_COST_GROUP` |
+| Duration | `12m34s` | Wall-clock time | `SHOW_COST_GROUP` |
+| Lines changed | `+42/-8` | Added (green) / removed (red) | `SHOW_COST_GROUP` |
+| 5h rate limit | `5h ███░░░ 38% ↺~2h14m` | 5-hour usage + reset | `SHOW_RATE_LIMITS` |
+| 7d rate limit | `7d █░░░░ 18% ↺~4d` | 7-day usage + reset | `SHOW_RATE_LIMITS` |
+
+#### L3: Worktree (3-line mode only)
+
+| Element | Example | Toggle |
+|---------|---------|--------|
+| Worktree name | `wt: name:feat-auth` | `SHOW_WORKTREE` |
+| Worktree path | `- path:/home/...` | `SHOW_WORKTREE` |
+| Worktree branch | `- branch:wt-feat-auth` (clickable) | `SHOW_WORKTREE` |
+
+### Thinking & Effort
+
+Rendered as a combined block: `🧠  ◆ thinking ~ ◕ high`
+
+**Thinking state** -- `◆` (on) / `◇` (off):
+
+Read from (in priority order):
+1. `is_thinking` in statusline JSON input (future Claude Code support)
+2. `alwaysThinkingEnabled` in `.claude/settings.local.json` (project)
+3. `alwaysThinkingEnabled` in `~/.claude/settings.local.json` (global)
+4. `alwaysThinkingEnabled` in `.claude/settings.json` (project)
+5. `alwaysThinkingEnabled` in `~/.claude/settings.json` (global)
+
+> **Note:** `meta+t` toggles thinking in-memory only (not written to disk). Use `/config` to toggle persistently.
+
+**Effort level** -- read from `effortLevel` in settings files:
+
+| Value | Icon | Note |
+|-------|------|------|
+| absent / `auto` | `◎` | Default -- Claude chooses (equivalent to `high`) |
+| `low` | `◔` | Quick, minimal overhead |
+| `medium` | `◑` | Balanced |
+| `high` | `◕` | Thorough |
+| `max` | `●` | Maximum effort |
+
+Set via `/effort <level>` or `/config`. Setting to `auto` removes the key from settings entirely.
+
+### Output Style
+
+Reads from `output_style.name` in statusline JSON, falling back to `outputStyle` in `settings.local.json`.
+
+| Style | Icon | Set via |
+|-------|------|---------|
+| `default` | `⚙️` | `/config` or absent |
+| `explanatory` | `🔎` | `/config` |
+| `learning` | `🎓` | `/config` |
+
+### Separators & Placeholders
+
+| Symbol | Usage |
+|--------|-------|
+| `\|` | Between element groups |
+| `~` | Between related items within a group |
+| `--` | Data not yet available (e.g., fresh session) |
+
+### Progress Bar Colors
+
+All bars (context, 5h, 7d) use the same thresholds:
+
+| Range | Color | Meaning |
+|-------|-------|---------|
+| 0-49% | Green | Safe |
+| 50-74% | Yellow | Moderate usage |
+| 75-100% | Red | High usage |
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | Statusline not showing | Check `settings.json` has `statusLine` config. Start a new session. |
-| Rate limits show `--` | Rate limit data arrives after first API response. Shows `--` placeholder until then. Requires Pro/Max. |
-| Rate limits seem stale | Values update only after each assistant response, not in real-time. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
+| Rate limits show `--` | Rate limit data arrives after first API response. Shows `--` until then. Requires Pro/Max. |
+| Rate limits seem stale | Values update only after each assistant response. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
-| Branch link not clickable | Auto-disabled on unsupported terminals (WSL conhost). Use Windows Terminal or `FORCE_HYPERLINK=1 claude`. |
+| Branch link not clickable | Auto-disabled on unsupported terminals. Use Windows Terminal or `FORCE_HYPERLINK=1 claude`. |
 | Git info stale | Decrease `GIT_CACHE_TTL` or `rm -rf /tmp/claude-statusline/` |
 | Width detection wrong | Override: `TERM_WIDTH=<cols>` in settings.json command. |
-| ✔/🛠️ not showing | Only appears when CWD is a git repository with cached status. |
 | PR# not showing | Requires `gh` CLI installed and authenticated. Hidden when no PR exists for branch. |
-| PR ✔/✗ not showing | Merge status requires GitHub to compute mergeability. Shows nothing if status is `UNKNOWN`. |
-| `◆`/`◇ thinking` not updating on `meta+t` | `meta+t` is in-memory only — not written to disk and not exposed in the statusline JSON. Claude Code shows its own "Thinking on/off" overlay instead. Use `/config` to toggle persistently — it writes to `settings.local.json` and the indicator updates after the next response. |
+| Thinking not updating on `meta+t` | In-memory only -- not written to disk. Use `/config` to toggle persistently. |
 | Effort level not showing | Set via `/effort <level>` or `/config`. `auto` removes the key (shows `◎ auto`). |
-| Output style not showing | Reads from `output_style.name` in JSON input. Ensure Claude Code v2.1+ and start a fresh session. |
+| Output style not showing | Reads from JSON input. Ensure Claude Code v2.1+ and start a fresh session. |
 
 ## Uninstall
 
