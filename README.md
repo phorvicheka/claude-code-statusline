@@ -81,6 +81,8 @@ chmod +x ~/.claude/statusline.sh
 
 Claude Code may send working directory paths with backslashes on Windows. The statusline normalizes all path separators automatically — folder names, git operations, and settings lookups all work regardless of separator style.
 
+> **Tip: multiple package managers on WSL/Windows.** If you installed Claude Code with both npm and pnpm (or yarn), your shell may resolve `claude` to the older installation. Run `which claude` to see which binary is active, then update with that package manager. The statusline's version display (`v2.1.107`) reflects whatever binary is running — if it looks outdated, this is likely why.
+
 ## Configuration
 
 ### Line Count
@@ -332,6 +334,7 @@ All bars (context, 5h, 7d) use the same thresholds:
 | Issue | Solution |
 |-------|----------|
 | Statusline not showing | Check `settings.json` has `statusLine` config. Start a new session. |
+| Version shows outdated | If you installed Claude Code with multiple package managers (npm, pnpm, yarn), only one is on your `$PATH`. Update the one your shell actually resolves: run `which claude` to find it, then update with the matching package manager (e.g. `pnpm update -g @anthropic-ai/claude-code`). |
 | Folder shows raw path instead of name | Fixed in v2. The statusline normalizes Windows backslash paths (`C:\Users\...`) automatically. Update to the latest version. |
 | Rate limit reset time not showing | Fixed in v2. Reset times (`↺~2h14m`) now parse both ISO 8601 strings and unix timestamps. Update to the latest version. |
 | Rate limits show `--` | Rate limit data arrives after first API response. Shows `--` until then. Requires Pro/Max. |
