@@ -129,9 +129,9 @@ eval "$(printf '%s' "$INPUT" | jq -r '
   "LINES_ADDED=" + (.cost.total_lines_added // 0 | tostring),
   "LINES_REMOVED=" + (.cost.total_lines_removed // 0 | tostring),
   "RATE_5H_PCT=" + (.rate_limits.five_hour.used_percentage // -1 | tostring),
-  "RATE_5H_RESETS=" + (.rate_limits.five_hour.resets_at // 0 | tostring),
+  "RATE_5H_RESETS=" + (.rate_limits.five_hour.resets_at // "" | tostring | s),
   "RATE_7D_PCT=" + (.rate_limits.seven_day.used_percentage // -1 | tostring),
-  "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // 0 | tostring),
+  "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // "" | tostring | s),
   "OUTPUT_STYLE=" + (.output_style.name // "" | s),
   "IS_THINKING=" + (.is_thinking // .thinking // .alwaysThinkingEnabled // "unknown" | tostring),
   "EFFORT_LEVEL_JSON=" + (.effort_level // .effortLevel // .effort // "" | s),
@@ -142,7 +142,8 @@ eval "$(printf '%s' "$INPUT" | jq -r '
 : "${MODEL_DISPLAY:=Unknown}" "${CWD:=}" "${CTX_SIZE:=0}" "${USED_PCT:=0}"
 : "${INPUT_TOKENS:=0}" "${TOTAL_COST:=0}" "${TOTAL_DURATION_MS:=0}"
 : "${LINES_ADDED:=0}" "${LINES_REMOVED:=0}"
-: "${RATE_5H_PCT:=-1}" "${RATE_7D_PCT:=-1}" "${OUTPUT_STYLE:=}" "${IS_THINKING:=unknown}"
+: "${RATE_5H_PCT:=-1}" "${RATE_5H_RESETS:=}" "${RATE_7D_PCT:=-1}" "${RATE_7D_RESETS:=}"
+: "${OUTPUT_STYLE:=}" "${IS_THINKING:=unknown}"
 : "${EFFORT_LEVEL_JSON:=}" "${TRANSCRIPT_PATH:=}"
 
 # ===========================================================================
@@ -244,10 +245,33 @@ fmt_duration() {
 
 fmt_reset_time() {
     local resets_at="$1"
-    (( resets_at <= 0 )) && return
+    [[ -z "$resets_at" || "$resets_at" == "0" ]] && return
+
+    # Convert to epoch seconds — handle both unix timestamps and ISO 8601 strings.
+    # Supports: GNU date (Linux/WSL/Git Bash), BSD date (macOS), and a pure-bash
+    # fallback for minimal environments where neither works.
+    local epoch
+    if [[ "$resets_at" =~ ^[0-9]+$ ]]; then
+        epoch="$resets_at"
+    else
+        # ISO 8601 string (e.g. "2026-04-14T22:00:00Z")
+        # Try GNU date first (-d), then BSD date (-jf), then parse manually
+        epoch=$(date -d "$resets_at" +%s 2>/dev/null) \
+            || epoch=$(date -jf "%Y-%m-%dT%H:%M:%SZ" "$resets_at" +%s 2>/dev/null) \
+            || epoch=$(date -jf "%Y-%m-%dT%H:%M:%S%z" "$resets_at" +%s 2>/dev/null) \
+            || {
+                # Pure-bash fallback: parse ISO 8601 via awk + date -u
+                # Handles "2026-04-14T22:00:00Z" and "2026-04-14T22:00:00+00:00"
+                epoch=$(echo "$resets_at" | awk -F'[T:.Z+-]' '{
+                    if (NF >= 6) printf "%s-%s-%s %s:%s:%s UTC\n", $1,$2,$3,$4,$5,$6
+                }' | xargs -I{} date -d "{}" +%s 2>/dev/null) || return
+            }
+    fi
+
+    (( epoch <= 0 )) && return
     local now
     now=$(date +%s)
-    local diff=$(( resets_at - now ))
+    local diff=$(( epoch - now ))
     (( diff <= 0 )) && { printf '↺now'; return; }
     local h=$(( diff / 3600 ))
     local m=$(( (diff % 3600) / 60 ))
