@@ -77,7 +77,7 @@ chmod +x ~/.claude/statusline.sh
 | Linux | Full support | Native environment |
 | macOS | Full support | BSD `date`/`stat` fallbacks included |
 | WSL (Ubuntu) | Full support | Handles Windows backslash paths (`C:\Users\...`) sent by Claude Code |
-| Windows (Git Bash / MSYS2) | Full support | GNU coreutils bundled with Git for Windows |
+| Windows (Git Bash / MSYS2) | Full support | GNU coreutils bundled; `stty size` may fail (defaults to 80 cols / compact tier) |
 
 Claude Code may send working directory paths with backslashes on Windows. The statusline normalizes all path separators automatically — folder names, git operations, and settings lookups all work regardless of separator style.
 
@@ -165,8 +165,8 @@ THRESHOLD_YELLOW=75     # below = yellow, above = red
 |------|-------|--------|
 | full | >=140 chars | All elements, full labels, max bar widths |
 | wide | 100-139 | Smaller bars, branch max 30 chars |
-| compact | 76-99 | Compact bars, branch max 20 chars |
-| narrow | <76 | Forces single line, branch max 12 chars |
+| compact | 76-99 | Compact bars, branch max 20 chars, reset times still shown |
+| narrow | <76 | Forces single line, branch max 12 chars, reset times hidden |
 
 Override: `TERM_WIDTH=150 claude`
 
@@ -336,7 +336,7 @@ All bars (context, 5h, 7d) use the same thresholds:
 | Statusline not showing | Check `settings.json` has `statusLine` config. Start a new session. |
 | Version shows outdated | If you installed Claude Code with multiple package managers (npm, pnpm, yarn), only one is on your `$PATH`. Update the one your shell actually resolves: run `which claude` to find it, then update with the matching package manager (e.g. `pnpm update -g @anthropic-ai/claude-code`). |
 | Folder shows raw path instead of name | Fixed in v2. The statusline normalizes Windows backslash paths (`C:\Users\...`) automatically. Update to the latest version. |
-| Rate limit reset time not showing | Fixed in v2. Reset times (`↺~2h14m`) now parse both ISO 8601 strings and unix timestamps. Update to the latest version. |
+| Rate limit reset time not showing | Fixed in v2. Reset times (`↺~2h14m`) now parse both ISO 8601 strings and unix timestamps. Also shown at compact width (76-99 cols) — previously only at full/wide (>=100). On Git Bash, `stty size` may fail, defaulting to 80 cols (compact). Update to the latest version. |
 | Rate limits show `--` | Rate limit data arrives after first API response. Shows `--` until then. Requires Pro/Max. |
 | Rate limits seem stale | Values update only after each assistant response. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
