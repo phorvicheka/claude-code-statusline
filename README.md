@@ -14,6 +14,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 - **Git status**: Branch, clean/dirty, ahead/behind, PR number + merge status
 - **Session info**: Cost, duration, lines changed, rate limits, worktree
 - **Thinking / Effort / Output style**: Live indicators for Claude's current mode
+- **Cross-platform**: Works on Linux, macOS, WSL, and Windows (Git Bash)
 - **Pure bash + jq**: No additional dependencies
 
 ## Quick Install
@@ -23,7 +24,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 Paste this prompt into Claude Code:
 
 ```
-Please check https://github.com/phorvicheka/claude-code-statusline, read the README.md, and follow the install steps.
+Please check https://github.com/phorvicheka/claude-code-statusline, read the README.md, and follow the install steps. Detect whether I'm on WSL, native Linux/macOS, or Windows (Git Bash) and adjust paths accordingly.
 ```
 
 > **Already have the repo locally?** You can use this shorter prompt instead:
@@ -68,6 +69,17 @@ chmod +x ~/.claude/statusline.sh
 - **jq** (JSON processor)
 - **git** (for branch info)
 - **gh** (GitHub CLI, optional -- for PR# display)
+
+### Platform Notes
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| Linux | Full support | Native environment |
+| macOS | Full support | BSD `date`/`stat` fallbacks included |
+| WSL (Ubuntu) | Full support | Handles Windows backslash paths (`C:\Users\...`) sent by Claude Code |
+| Windows (Git Bash / MSYS2) | Full support | GNU coreutils bundled with Git for Windows |
+
+Claude Code may send working directory paths with backslashes on Windows. The statusline normalizes all path separators automatically — folder names, git operations, and settings lookups all work regardless of separator style.
 
 ## Configuration
 
@@ -242,8 +254,8 @@ s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 
 | Cost | `$1.23` | Session cost (`--` if $0) | `SHOW_COST_GROUP` |
 | Duration | `12m34s` | Wall-clock time | `SHOW_COST_GROUP` |
 | Lines changed | `+42/-8` | Added (green) / removed (red) | `SHOW_COST_GROUP` |
-| 5h rate limit | `5h ███░░░ 38% ↺~2h14m` | 5-hour usage + reset | `SHOW_RATE_LIMITS` |
-| 7d rate limit | `7d █░░░░ 18% ↺~4d` | 7-day usage + reset | `SHOW_RATE_LIMITS` |
+| 5h rate limit | `5h ███░░░ 38% ↺~2h14m` | 5-hour usage + reset countdown | `SHOW_RATE_LIMITS` |
+| 7d rate limit | `7d █░░░░ 18% ↺~4d` | 7-day usage + reset countdown | `SHOW_RATE_LIMITS` |
 
 #### L3: Worktree (3-line mode only)
 
@@ -320,6 +332,8 @@ All bars (context, 5h, 7d) use the same thresholds:
 | Issue | Solution |
 |-------|----------|
 | Statusline not showing | Check `settings.json` has `statusLine` config. Start a new session. |
+| Folder shows raw path instead of name | Fixed in v2. The statusline normalizes Windows backslash paths (`C:\Users\...`) automatically. Update to the latest version. |
+| Rate limit reset time not showing | Fixed in v2. Reset times (`↺~2h14m`) now parse both ISO 8601 strings and unix timestamps. Update to the latest version. |
 | Rate limits show `--` | Rate limit data arrives after first API response. Shows `--` until then. Requires Pro/Max. |
 | Rate limits seem stale | Values update only after each assistant response. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
@@ -331,12 +345,30 @@ All bars (context, 5h, 7d) use the same thresholds:
 | Effort level not showing | Set via `/effort <level>` or `/config`. `auto` removes the key (shows `◎ auto`). `max` requires transcript parsing (needs `transcript_path` in JSON). |
 | Effort level stuck | Remove `CLAUDE_CODE_EFFORT_LEVEL` from `settings.json` `env` block — it overrides `/effort`. |
 | Output style not showing | Reads from JSON input. Ensure Claude Code v2.1+ and start a fresh session. |
+| Something else looks wrong | Set `STATUSLINE_DEBUG=1` in your env to log raw JSON to `~/.claude/statusline-debug.log`, then inspect the payload. |
 
 ## Uninstall
 
 ```bash
 bash uninstall.sh
 ```
+
+## Debugging
+
+Set `STATUSLINE_DEBUG=1` to log the raw JSON that Claude Code sends to `~/.claude/statusline-debug.log`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "STATUSLINE_DEBUG=1 bash ~/.claude/statusline.sh"
+  }
+}
+```
+
+Or enable it for a single session: `STATUSLINE_DEBUG=1 claude`
+
+The log appends each payload separated by `---`. Useful for diagnosing missing fields, unexpected formats, or path issues.
 
 ## Adding New Elements
 
