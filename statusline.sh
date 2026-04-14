@@ -88,6 +88,13 @@ if [[ -z "$INPUT" ]]; then
 fi
 
 # ===========================================================================
+# Debug hook: set STATUSLINE_DEBUG=1 to log raw JSON to a file
+# ===========================================================================
+if [[ "${STATUSLINE_DEBUG:-0}" == "1" ]]; then
+    printf '%s\n---\n' "$INPUT" >> "${HOME}/.claude/statusline-debug.log"
+fi
+
+# ===========================================================================
 # Parse all fields in a single jq call
 # ===========================================================================
 eval "$(printf '%s' "$INPUT" | jq -r '
@@ -137,6 +144,15 @@ eval "$(printf '%s' "$INPUT" | jq -r '
 : "${LINES_ADDED:=0}" "${LINES_REMOVED:=0}"
 : "${RATE_5H_PCT:=-1}" "${RATE_7D_PCT:=-1}" "${OUTPUT_STYLE:=}" "${IS_THINKING:=unknown}"
 : "${EFFORT_LEVEL_JSON:=}" "${TRANSCRIPT_PATH:=}"
+
+# ===========================================================================
+# Normalize Windows backslash paths for WSL compatibility
+# Claude Code may send paths like C:\Users\foo\project on Windows.
+# ===========================================================================
+CWD="${CWD//\\//}"
+WORKSPACE_DIR="${WORKSPACE_DIR//\\//}"
+PROJECT_DIR="${PROJECT_DIR//\\//}"
+WORKTREE_PATH="${WORKTREE_PATH//\\//}"
 
 # ===========================================================================
 # Terminal width detection
@@ -269,6 +285,8 @@ GIT_CACHE_DIR="/tmp/claude-statusline"
 
 get_git_info() {
     local dir="$1"
+    # Normalize backslashes for WSL compatibility (Windows paths)
+    dir="${dir//\\//}"
     [[ -z "$dir" || ! -d "$dir" ]] && return
 
     mkdir -p "$GIT_CACHE_DIR" 2>/dev/null
@@ -426,15 +444,21 @@ render_git() {
 }
 
 # Folder: show basename, clickable link reveals full path
+# Handles Windows backslash paths (e.g. C:\Users\foo\project) by normalizing
+# separators before extracting the basename.
 render_folder() {
     $SHOW_FOLDER || return
-    local dir="${WORKSPACE_DIR:-$CWD}"
+    local dir="${WORKSPACE_DIR:-${CWD:-$PWD}}"
     [[ -z "$dir" ]] && return
-    local basename="${dir##*/}"
+    # Normalize backslashes → forward slashes (Windows paths via WSL)
+    local norm="${dir//\\//}"
+    # Strip trailing separator(s)
+    norm="${norm%/}"
+    local basename="${norm##*/}"
     [[ -z "$basename" ]] && return
     # Clickable: click reveals full path via file:// URL
     local folder_text
-    folder_text=$(make_link "file://${dir}" "${C_WHITE}${basename}${C_RESET}")
+    folder_text=$(make_link "file://${norm}" "${C_WHITE}${basename}${C_RESET}")
     printf '%b' "$folder_text"
 }
 
