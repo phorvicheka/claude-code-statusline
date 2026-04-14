@@ -10,6 +10,23 @@ TARGET="${CLAUDE_DIR}/statusline.sh"
 SETTINGS="${CLAUDE_DIR}/settings.json"
 CACHE_DIR="/tmp/claude-statusline"
 
+# Flags
+AUTO_YES=false
+while getopts "y" opt; do
+    case "$opt" in
+        y) AUTO_YES=true ;;
+        *) echo "Usage: install.sh [-y]" >&2; exit 1 ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+# Detect install vs update
+if [[ -f "$TARGET" ]]; then
+    ACTION="Updating"
+else
+    ACTION="Installing"
+fi
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -25,6 +42,7 @@ error() { printf "${RED}[ERROR]${RESET} %s\n" "$1" >&2; }
 # ------------------------------------------------------------------
 # 1. Check dependencies
 # ------------------------------------------------------------------
+info "${ACTION} Claude Code Statusline v2..."
 info "Checking dependencies..."
 
 missing=()
@@ -58,24 +76,34 @@ fi
 # ------------------------------------------------------------------
 # 2. Choose line count
 # ------------------------------------------------------------------
-echo ""
-info "Choose your statusline mode:"
-echo "  1) 1-line  — compact: model, tokens, git, folder, thinking, cost"
-echo "  2) 2-line  — adds session IDs, cost group, rate limits"
-echo "  3) 3-line  — full (default): adds worktree details (name, path, branch)"
-echo ""
-read -rp "Enter 1, 2, or 3 [default: 3]: " line_choice
-line_choice="${line_choice:-3}"
+if [[ "$AUTO_YES" == true ]]; then
+    line_choice=3
+    ok "Auto mode: using default 3-line mode"
+else
+    echo ""
+    info "Choose your statusline mode:"
+    echo "  1) 1-line  — compact: model, tokens, git, folder, thinking, cost"
+    echo "  2) 2-line  — adds session IDs, cost group, rate limits"
+    echo "  3) 3-line  — full (default): adds worktree details (name, path, branch)"
+    echo ""
+    read -rp "Enter 1, 2, or 3 [default: 3]: " line_choice
+    line_choice="${line_choice:-3}"
 
-case "$line_choice" in
-    1|2|3) ;;
-    *) warn "Invalid choice '$line_choice', using default (3)"; line_choice=3 ;;
-esac
+    case "$line_choice" in
+        1|2|3) ;;
+        *) warn "Invalid choice '$line_choice', using default (3)"; line_choice=3 ;;
+    esac
+fi
 
 ok "Selected ${line_choice}-line mode"
 
 # ------------------------------------------------------------------
-# 3. Backup existing statusline
+# 3. Ensure target directory exists
+# ------------------------------------------------------------------
+mkdir -p "$CLAUDE_DIR"
+
+# ------------------------------------------------------------------
+# 4. Backup existing statusline
 # ------------------------------------------------------------------
 if [[ -f "$TARGET" ]]; then
     backup="${TARGET}.bak.$(date +%s)"
@@ -84,7 +112,7 @@ if [[ -f "$TARGET" ]]; then
 fi
 
 # ------------------------------------------------------------------
-# 4. Install new statusline
+# 5. Install new statusline
 # ------------------------------------------------------------------
 cp "${SCRIPT_DIR}/statusline.sh" "$TARGET"
 chmod +x "$TARGET"
@@ -101,10 +129,8 @@ fi
 ok "Installed statusline.sh to ${TARGET}"
 
 # ------------------------------------------------------------------
-# 5. Configure settings.json
+# 6. Configure settings.json
 # ------------------------------------------------------------------
-mkdir -p "$CLAUDE_DIR"
-
 if [[ -f "$SETTINGS" ]]; then
     # Check if statusLine is already configured
     if jq -e '.statusLine' "$SETTINGS" >/dev/null 2>&1; then
@@ -113,7 +139,11 @@ if [[ -f "$SETTINGS" ]]; then
             ok "settings.json already configured (statusLine command points to statusline.sh)"
         else
             warn "settings.json has a different statusLine command: $current_cmd"
-            read -rp "Overwrite with new config? [y/N]: " overwrite
+            if [[ "$AUTO_YES" == true ]]; then
+                overwrite="y"
+            else
+                read -rp "Overwrite with new config? [y/N]: " overwrite
+            fi
             if [[ "$overwrite" =~ ^[Yy] ]]; then
                 tmp=$(mktemp)
                 jq '.statusLine = {"type": "command", "command": "bash '"$TARGET"'"}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
@@ -140,7 +170,7 @@ EOF
 fi
 
 # ------------------------------------------------------------------
-# 6. Create cache directory
+# 7. Create cache directory
 # ------------------------------------------------------------------
 mkdir -p "$CACHE_DIR"
 ok "Cache directory ready: ${CACHE_DIR}"
@@ -149,7 +179,7 @@ ok "Cache directory ready: ${CACHE_DIR}"
 # Done
 # ------------------------------------------------------------------
 echo ""
-printf "${GREEN}Installation complete!${RESET}\n"
+printf "${GREEN}${ACTION} complete!${RESET}\n"
 echo ""
 echo "  Mode:     ${line_choice}-line"
 echo "  Script:   ${TARGET}"
