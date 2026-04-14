@@ -691,7 +691,7 @@ _render_rate() {
     bar=$(build_bar "$pct_int" "$_rate_bar")
     pct_c=$(pct_color "$pct_int")
     local out="${C_DIM}${label}${C_RESET} ${bar} ${pct_c}${pct_int}%${C_RESET}"
-    if [[ "$TIER" == "full" || "$TIER" == "wide" ]]; then
+    if [[ "$TIER" != "narrow" ]]; then
         local reset_str
         reset_str=$(fmt_reset_time "$resets_at")
         [[ -n "$reset_str" ]] && out+=" ${C_DIM}${reset_str}${C_RESET}"
