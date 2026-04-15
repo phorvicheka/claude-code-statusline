@@ -69,7 +69,7 @@ L3=(render_worktree)
 
 ```bash
 GIT_CACHE_TTL=5         # seconds to cache git status
-MAX_BRANCH_LEN=40       # max branch name length
+MAX_BRANCH_LEN=80       # max branch name length (full tier)
 TOKEN_BAR_WIDTH=10      # context bar character width
 RATE_BAR_WIDTH=10       # rate limit bar character width
 THRESHOLD_GREEN=50      # below = green
@@ -80,9 +80,9 @@ THRESHOLD_YELLOW=75     # below = yellow, above = red
 
 | Tier | Width | Effect |
 |------|-------|--------|
-| full | >=140 chars | All elements, full labels, max bar widths |
-| wide | 100-139 | Smaller bars, branch max 30 chars |
-| compact | 76-99 | Compact bars, branch max 20 chars, reset times still shown |
-| narrow | <76 | Forces single line, branch max 12 chars, reset times hidden |
+| full | >=140 chars | All elements, full labels, branch max 80 chars |
+| wide | 100-139 | Smaller bars, branch max 50 chars |
+| compact | 76-99 | Compact bars, branch max 30 chars, reset times still shown |
+| narrow | <76 | Forces single line, branch max 15 chars, reset times hidden |
 
 Override: `TERM_WIDTH=150 claude`

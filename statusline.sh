@@ -53,7 +53,7 @@ fi
 
 # ── Sizing ──
 GIT_CACHE_TTL=5         # seconds to cache git status
-MAX_BRANCH_LEN=40       # truncate branch names beyond this
+MAX_BRANCH_LEN=80       # truncate branch names beyond this (full tier)
 TOKEN_BAR_WIDTH=10      # context bar width in characters
 RATE_BAR_WIDTH=10       # rate limit bar width in characters
 
@@ -157,24 +157,26 @@ WORKTREE_PATH="${WORKTREE_PATH//\\//}"
 
 # ===========================================================================
 # Terminal width detection
-# Tries multiple methods for cross-platform support:
-#   1. TERM_WIDTH env var (explicit override)
-#   2. COLUMNS (set by some shells)
-#   3. tput cols (works on most systems including Git Bash/MSYS2)
-#   4. stty size (fails on Git Bash when no /dev/tty)
-#   5. mode con (Windows native fallback)
-#   6. Default 120 (reasonable for modern terminals)
+# When run as a statusline command, stdin is a JSON pipe — there is no TTY.
+# Tools like tput/stty return bogus defaults (80) in that context.
+# Only trust detection when stdout is a real terminal; otherwise default
+# to 200 (full tier) and let Claude Code handle display wrapping.
+# Override: set TERM_WIDTH in the statusLine command or env.
 # ===========================================================================
 if [[ "${TERM_WIDTH:-0}" -le 0 ]] 2>/dev/null; then
     if [[ "${COLUMNS:-0}" -gt 0 ]] 2>/dev/null; then
         TERM_WIDTH=$COLUMNS
-    else
+    elif [[ -t 1 ]]; then
+        # stdout is a terminal — detection is trustworthy
         _w=$(tput cols 2>/dev/null) \
             || _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') \
             || _w=$(mode con 2>/dev/null | awk '/Columns:/{gsub(/[^0-9]/,"",$2); print $2}') \
             || _w=0
-        [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=120
+        [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=200
         unset _w
+    else
+        # No terminal (piped by Claude Code) — default to full tier
+        TERM_WIDTH=200
     fi
 fi
 
@@ -188,9 +190,9 @@ fi
 # Adjust sizing per tier
 case "$TIER" in
     full)    _branch_max=$MAX_BRANCH_LEN; _token_bar=$TOKEN_BAR_WIDTH; _rate_bar=$RATE_BAR_WIDTH ;;
-    wide)    _branch_max=30; _token_bar=8; _rate_bar=8 ;;
-    compact) _branch_max=20; _token_bar=6; _rate_bar=6 ;;
-    narrow)  _branch_max=12; _token_bar=4; _rate_bar=4 ;;
+    wide)    _branch_max=50; _token_bar=8; _rate_bar=8 ;;
+    compact) _branch_max=30; _token_bar=6; _rate_bar=6 ;;
+    narrow)  _branch_max=15; _token_bar=4; _rate_bar=4 ;;
 esac
 
 # In narrow tier, force single line
