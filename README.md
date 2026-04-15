@@ -30,6 +30,25 @@ Please check https://github.com/phorvicheka/claude-code-statusline, read the REA
 > **Already have the repo locally?** Use:
 > `Please read the README.md in this directory and follow the install steps.`
 
+**Customize elements** -- toggle visibility of any statusline element:
+
+```
+In my Claude Code statusline at ~/.claude/statusline.sh, set SHOW_<ELEMENT>=false for: <elements to hide>. Leave all others as true. The toggle flags are at the top of the file.
+```
+
+> Example: `...set SHOW_COST_GROUP=false and SHOW_OUTPUT_STYLE=false for: cost group, output style...`
+>
+> Available elements: `MODEL`, `TOKENS`, `GIT`, `FOLDER`, `THINKING`, `EFFORT`, `OUTPUT_STYLE`, `AGENT`, `VIM_MODE`, `VERSION`, `SESSION_ID`, `SESSION_NAME`, `COST_GROUP`, `RATE_LIMITS`, `WORKTREE`, `PR`, `CLICKABLE_LINKS`
+
+**Uninstall**:
+
+```
+Please check https://github.com/phorvicheka/claude-code-statusline, read the README.md, and run the uninstall steps.
+```
+
+> **Already have the repo locally?** Use:
+> `Please run bash uninstall.sh in this directory to remove the statusline.`
+
 ### Script Install
 
 ```bash
