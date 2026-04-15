@@ -127,6 +127,7 @@ See [Known Limitations](docs/known-limitations.md) for clickable link support an
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
 | Branch link not clickable | Auto-disabled on unsupported terminals. Use Windows Terminal or `FORCE_HYPERLINK=1 claude`. |
 | Git info stale | Decrease `GIT_CACHE_TTL` or `rm -rf /tmp/claude-statusline/` |
+| Branch name truncated | Width detection may fail on Git Bash (now uses `tput cols` with 120-col default). Update to latest, or override: `TERM_WIDTH=<cols>` in settings.json command. |
 | Width detection wrong | Override: `TERM_WIDTH=<cols>` in settings.json command. |
 | PR# not showing | Requires `gh` CLI installed and authenticated. Hidden when no PR exists for branch. |
 | Thinking not updating on `meta+t` | In-memory only -- not written to disk. Use `/config` to toggle persistently. |

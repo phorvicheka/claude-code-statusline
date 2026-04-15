@@ -157,13 +157,23 @@ WORKTREE_PATH="${WORKTREE_PATH//\\//}"
 
 # ===========================================================================
 # Terminal width detection
+# Tries multiple methods for cross-platform support:
+#   1. TERM_WIDTH env var (explicit override)
+#   2. COLUMNS (set by some shells)
+#   3. tput cols (works on most systems including Git Bash/MSYS2)
+#   4. stty size (fails on Git Bash when no /dev/tty)
+#   5. mode con (Windows native fallback)
+#   6. Default 120 (reasonable for modern terminals)
 # ===========================================================================
 if [[ "${TERM_WIDTH:-0}" -le 0 ]] 2>/dev/null; then
     if [[ "${COLUMNS:-0}" -gt 0 ]] 2>/dev/null; then
         TERM_WIDTH=$COLUMNS
     else
-        _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}')
-        [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=80
+        _w=$(tput cols 2>/dev/null) \
+            || _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') \
+            || _w=$(mode con 2>/dev/null | awk '/Columns:/{gsub(/[^0-9]/,"",$2); print $2}') \
+            || _w=0
+        [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=120
         unset _w
     fi
 fi
