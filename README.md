@@ -24,7 +24,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 **Install or update** -- paste this prompt into Claude Code:
 
 ```
-Please check https://github.com/phorvicheka/claude-code-statusline, read the README.md, and follow the install steps. Detect whether I'm on WSL, native Linux/macOS, or Windows (Git Bash) and adjust paths accordingly.
+Please check https://github.com/phorvicheka/claude-code-statusline, read the README.md, and follow the install steps.
 ```
 
 > **Already have the repo locally?** Use:

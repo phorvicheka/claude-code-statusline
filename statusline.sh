@@ -147,13 +147,16 @@ eval "$(printf '%s' "$INPUT" | jq -r '
 : "${EFFORT_LEVEL_JSON:=}" "${TRANSCRIPT_PATH:=}"
 
 # ===========================================================================
-# Normalize Windows backslash paths for WSL compatibility
+# Normalize Windows backslash paths
 # Claude Code may send paths like C:\Users\foo\project on Windows.
+# IMPORTANT: use tr, not ${var//\\//} — bash parameter expansion silently
+# fails to replace backslashes in MINGW64 piped execution contexts.
 # ===========================================================================
-CWD="${CWD//\\//}"
-WORKSPACE_DIR="${WORKSPACE_DIR//\\//}"
-PROJECT_DIR="${PROJECT_DIR//\\//}"
-WORKTREE_PATH="${WORKTREE_PATH//\\//}"
+_to_fwd() { printf '%s' "$1" | tr '\134' '/'; }
+CWD=$(_to_fwd "$CWD")
+WORKSPACE_DIR=$(_to_fwd "$WORKSPACE_DIR")
+PROJECT_DIR=$(_to_fwd "$PROJECT_DIR")
+WORKTREE_PATH=$(_to_fwd "$WORKTREE_PATH")
 
 # ===========================================================================
 # Terminal width detection
@@ -321,8 +324,8 @@ GIT_CACHE_DIR="/tmp/claude-statusline"
 
 get_git_info() {
     local dir="$1"
-    # Normalize backslashes for WSL compatibility (Windows paths)
-    dir="${dir//\\//}"
+    # Normalize backslashes (use tr, not ${var//\\//} — fails on MINGW64 piped)
+    dir=$(_to_fwd "$dir")
     [[ -z "$dir" || ! -d "$dir" ]] && return
 
     mkdir -p "$GIT_CACHE_DIR" 2>/dev/null
@@ -486,15 +489,18 @@ render_folder() {
     $SHOW_FOLDER || return
     local dir="${WORKSPACE_DIR:-${CWD:-$PWD}}"
     [[ -z "$dir" ]] && return
-    # Normalize backslashes → forward slashes (Windows paths via WSL)
-    local norm="${dir//\\//}"
+    # Normalize backslashes (use tr, not ${var//\\//} — fails on MINGW64 piped)
+    local norm
+    norm=$(_to_fwd "$dir")
     # Strip trailing separator(s)
     norm="${norm%/}"
     local basename="${norm##*/}"
     [[ -z "$basename" ]] && return
-    # Clickable: click reveals full path via file:// URL
+    # file:// URL — Windows drive paths need three slashes (file:///C:/...)
+    local file_url="file://${norm}"
+    [[ "$norm" =~ ^[A-Za-z]: ]] && file_url="file:///${norm}"
     local folder_text
-    folder_text=$(make_link "file://${norm}" "${C_WHITE}${basename}${C_RESET}")
+    folder_text=$(make_link "$file_url" "${C_WHITE}${basename}${C_RESET}")
     printf '%b' "$folder_text"
 }
 
