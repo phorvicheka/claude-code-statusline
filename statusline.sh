@@ -450,7 +450,7 @@ render_git() {
 
     # Dirty: ✔ green (clean), 🛠️ yellow (dirty)
     if [[ "$g_dirty" == "dirty" ]]; then
-        out+=" ${C_YELLOW}🛠️${C_RESET}"
+        out+=" ${C_YELLOW}🛠️ ${C_RESET}"
     elif [[ "$g_dirty" == "clean" ]]; then
         out+=" ${C_GREEN}✔${C_RESET}"
     fi
