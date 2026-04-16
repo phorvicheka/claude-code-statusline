@@ -159,6 +159,71 @@ PROJECT_DIR=$(_to_fwd "$PROJECT_DIR")
 WORKTREE_PATH=$(_to_fwd "$WORKTREE_PATH")
 
 # ===========================================================================
+# Auto-detect git worktree when Claude Code JSON doesn't provide it
+# A linked worktree has git-dir != git-common-dir (e.g., .git/worktrees/<name>)
+# ===========================================================================
+_detect_worktree() {
+    local dir="$1"
+    [[ -z "$dir" || ! -d "$dir" ]] && return
+
+    local git_dir common_dir
+    git_dir=$(git -C "$dir" rev-parse --git-dir 2>/dev/null) || return
+    common_dir=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) || return
+
+    # Normalize to absolute paths for comparison
+    git_dir=$(cd "$dir" && cd "$git_dir" && pwd)
+    common_dir=$(cd "$dir" && cd "$common_dir" && pwd)
+
+    [[ "$git_dir" == "$common_dir" ]] && return  # not a linked worktree
+
+    # This IS a linked worktree — populate name, path, branch
+    WORKTREE_NAME="${dir##*/}"
+    WORKTREE_PATH="$dir"
+
+    # Find branch: check if any worktree at this path has a branch
+    local wt_path="" wt_branch=""
+    while IFS= read -r line; do
+        case "$line" in
+            "worktree "*)  wt_path="${line#worktree }" ;;
+            "branch "*)    wt_branch="${line#branch refs/heads/}" ;;
+            "")
+                if [[ "$wt_path" == "$dir" && -n "$wt_branch" ]]; then
+                    WORKTREE_BRANCH="$wt_branch"
+                    return
+                fi
+                wt_path="" ; wt_branch=""
+                ;;
+        esac
+    done < <(git -C "$dir" worktree list --porcelain 2>/dev/null; echo "")
+
+    # Detached HEAD worktree: find the branch from the main worktree at the same commit
+    if [[ -z "$WORKTREE_BRANCH" ]]; then
+        local my_head
+        my_head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || return
+        wt_path="" ; wt_branch=""
+        local wt_head=""
+        while IFS= read -r line; do
+            case "$line" in
+                "worktree "*)  wt_path="${line#worktree }" ;;
+                "HEAD "*)      wt_head="${line#HEAD }" ;;
+                "branch "*)    wt_branch="${line#branch refs/heads/}" ;;
+                "")
+                    if [[ "$wt_path" != "$dir" && "$wt_head" == "$my_head" && -n "$wt_branch" ]]; then
+                        WORKTREE_BRANCH="$wt_branch"
+                        return
+                    fi
+                    wt_path="" ; wt_head="" ; wt_branch=""
+                    ;;
+            esac
+        done < <(git -C "$dir" worktree list --porcelain 2>/dev/null; echo "")
+    fi
+}
+
+if [[ -z "$WORKTREE_NAME" ]]; then
+    _detect_worktree "$(_to_fwd "${CWD:-$WORKSPACE_DIR}")"
+fi
+
+# ===========================================================================
 # Terminal width detection
 # When run as a statusline command, stdin is a JSON pipe — there is no TTY.
 # Tools like tput/stty return bogus defaults (80) in that context.
@@ -348,9 +413,38 @@ get_git_info() {
 
         branch=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null)
         if [[ -z "$branch" ]]; then
-            branch=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null)
-            [[ -z "$branch" ]] && return
-            branch="(${branch})"
+            # Detached HEAD — try to resolve via worktree sibling at same commit
+            local _git_dir _common_dir
+            _git_dir=$(git -C "$dir" rev-parse --git-dir 2>/dev/null)
+            _common_dir=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)
+            if [[ -n "$_git_dir" && -n "$_common_dir" ]]; then
+                _git_dir=$(cd "$dir" && cd "$_git_dir" && pwd)
+                _common_dir=$(cd "$dir" && cd "$_common_dir" && pwd)
+            fi
+            if [[ "$_git_dir" != "$_common_dir" ]]; then
+                local _my_head _wt_path="" _wt_head="" _wt_branch=""
+                _my_head=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
+                while IFS= read -r line; do
+                    case "$line" in
+                        "worktree "*)  _wt_path="${line#worktree }" ;;
+                        "HEAD "*)      _wt_head="${line#HEAD }" ;;
+                        "branch "*)    _wt_branch="${line#branch refs/heads/}" ;;
+                        "")
+                            if [[ "$_wt_path" != "$dir" && "$_wt_head" == "$_my_head" && -n "$_wt_branch" ]]; then
+                                branch="$_wt_branch"
+                                break
+                            fi
+                            _wt_path="" ; _wt_head="" ; _wt_branch=""
+                            ;;
+                    esac
+                done < <(git -C "$dir" worktree list --porcelain 2>/dev/null; echo "")
+            fi
+            # Final fallback: short commit hash
+            if [[ -z "$branch" ]]; then
+                branch=$(git -C "$dir" rev-parse --short HEAD 2>/dev/null)
+                [[ -z "$branch" ]] && return
+                branch="(${branch})"
+            fi
         fi
 
         if [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
