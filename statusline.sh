@@ -488,6 +488,10 @@ get_git_info() {
 # Element renderers
 # ===========================================================================
 
+render_user_host() {
+    printf '\033[01;32m%s@%s\033[00m' "$(whoami)" "$(hostname -s)"
+}
+
 render_model() {
     $SHOW_MODEL || return
     local color="$C_BLUE"
@@ -883,14 +887,14 @@ declare -a L1=() L2=() L3=()
 
 case "$STATUSLINE_LINES" in
     1)
-        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version render_session_ids render_cost_group)
+        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version render_session_ids render_cost_group)
         ;;
     2)
-        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
+        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         ;;
     *)
-        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
+        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         L3=(render_worktree)
         ;;
