@@ -123,7 +123,7 @@ eval "$(printf '%s' "$INPUT" | jq -r '
       (.context_window.total_input_tokens // 0)
     end | tostring
   ),
-  "EXCEEDS_200K=" + (.exceeds_200k_tokens // false | tostring),
+  "EXCEEDS_200K=" + (.exceeds_200k_tokens // .context_window.exceeds_200k_tokens // false | tostring),
   "TOTAL_COST=" + (.cost.total_cost_usd // 0 | tostring),
   "TOTAL_DURATION_MS=" + (.cost.total_duration_ms // 0 | tostring),
   "LINES_ADDED=" + (.cost.total_lines_added // 0 | tostring),
@@ -513,7 +513,10 @@ render_tokens() {
     max_fmt=$(fmt_tokens "$CTX_SIZE")
     pct_c=$(pct_color "$pct_int")
     local out="${bar} ${pct_c}${pct_int}%${C_RESET} ${C_WHITE}${used_fmt}${C_DIM}/${max_fmt}${C_RESET}"
-    [[ "$EXCEEDS_200K" == "true" ]] && out+=" ${C_RED}⚠${C_RESET}"
+    # Use ⚠️ (U+26A0 + U+FE0F variation selector) for emoji presentation.
+    # Bare ⚠ falls back to text presentation and renders as a missing glyph
+    # in many Windows fonts (e.g., Git Bash default Lucida Console).
+    [[ "$EXCEEDS_200K" == "true" ]] && out+=" ${C_RED}⚠️ ${C_RESET}"
     printf '%b' "$out"
 }
 
@@ -635,7 +638,7 @@ render_thinking_effort() {
             # not quoted text inside tool results or agent messages.
             level=$(tac "$TRANSCRIPT_PATH" 2>/dev/null \
                 | grep -m1 '"content":"<local-command-stdout>[^"]*[Ee]ffort level' \
-                | grep -oP '(?:Set effort level to|Effort level set to) \K(low|medium|high|max|auto)' \
+                | grep -oP '(?:Set effort level to|Effort level set to) \K(low|medium|high|xhigh|max|auto)' \
                 | head -1 || true)
         fi
         # 3. effortLevel key in settings JSON (persisted default)
@@ -666,6 +669,7 @@ render_thinking_effort() {
             low)    effort_icon="◔"; effort_color="$C_WHITE" ;;
             medium) effort_icon="◑"; effort_color="$C_WHITE" ;;
             high)   effort_icon="◕"; effort_color="$C_WHITE" ;;
+            xhigh)  effort_icon="◉"; effort_color="$C_MAGENTA" ;;
             max)    effort_icon="●"; effort_color="$C_MAGENTA" ;;
             *)      effort_icon="◎"; effort_color="$C_DIM"; level="auto" ;;
         esac

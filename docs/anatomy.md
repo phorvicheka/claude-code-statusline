@@ -28,7 +28,7 @@ s-id:536ea9b1 ~ s-name:-- | cost: -- ~ 1s ~ -- | 5h -- | 7d --
 
 **High usage**:
 ```
-◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max | ⚙️  default | v2.1.97
+◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠️ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max | ⚙️  default | v2.1.97
 s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 5h ██░░░░░░░░ 25% ↺~2h54m | 7d █████████░ 91% ↺~21h54m
 ```
 
@@ -41,7 +41,7 @@ s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 
 | Model | `◆ Opus 4.6` | Current Claude model | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_MODEL` |
 | Context bar | `████░░░░░░ 48%` | Context window used | green <50%, yellow 50-74%, red >=75% | `SHOW_TOKENS` |
 | Token counts | `395k/1.0m` | Used / max tokens | white / dim | `SHOW_TOKENS` |
-| Context warning | `⚠` | Exceeds 200k tokens | red | `SHOW_TOKENS` |
+| Context warning | `⚠️` | Exceeds 200k tokens | red | `SHOW_TOKENS` |
 | Git branch | `⎇ feature/auth` | Current branch (clickable) | blue | `SHOW_GIT` |
 | Git status | `✔` / `🛠️` | Clean / dirty working tree | green / yellow | `SHOW_GIT` |
 | Ahead/Behind | `↑2` `↓1` | Commits ahead/behind upstream | green / red | `SHOW_GIT` |
@@ -101,6 +101,7 @@ Read from (in priority order):
 | `low` | `◔` | Quick, minimal overhead |
 | `medium` | `◑` | Balanced |
 | `high` | `◕` | Thorough |
+| `xhigh` | `◉` | Extra-high reasoning budget |
 | `max` | `●` | Maximum effort (session-only -- not written to settings.json) |
 
 Set via `/effort <level>` or `/config`. Setting to `auto` removes the key from settings entirely.

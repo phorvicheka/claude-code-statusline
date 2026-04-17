@@ -131,7 +131,7 @@ See [Known Limitations](docs/known-limitations.md) for clickable link support an
 | Width detection wrong | Override: `TERM_WIDTH=<cols>` in settings.json command. |
 | PR# not showing | Requires `gh` CLI installed and authenticated. Hidden when no PR exists for branch. |
 | Thinking not updating on `meta+t` | In-memory only -- not written to disk. Use `/config` to toggle persistently. |
-| Effort level not showing | Set via `/effort <level>` or `/config`. `auto` removes the key (shows `◎ auto`). `max` requires transcript parsing (needs `transcript_path` in JSON). |
+| Effort level not showing | Set via `/effort <level>` or `/config`. Supported: `low`, `medium`, `high`, `xhigh`, `max`, `auto`. `auto` removes the key (shows `◎ auto`). The default for Opus 4.7 in Claude Code is now `xhigh` (`◉ xhigh`). `max` and `xhigh` require transcript parsing (needs `transcript_path` in JSON). |
 | Effort level stuck | Remove `CLAUDE_CODE_EFFORT_LEVEL` from `settings.json` `env` block -- it overrides `/effort`. |
 | Output style not showing | Reads from JSON input. Ensure Claude Code v2.1+ and start a fresh session. |
 | Something else looks wrong | Set `STATUSLINE_DEBUG=1` in your env to log raw JSON to `~/.claude/statusline-debug.log`. See [Debugging Guide](docs/debugging.md). |
