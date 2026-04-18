@@ -56,14 +56,19 @@ SHOW_CLICKABLE_LINKS=true
 Elements are grouped by line in arrays at the bottom of the script:
 
 ```bash
-L1=(render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
+L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_vim)
 L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
+# Inside a git worktree:
 L3=(render_worktree)
+L4=(render_user_host render_output_style render_version)
+# Otherwise (no worktree) L3 absorbs L4's elements and L4 is empty:
+# L3=(render_user_host render_output_style render_version)
 ```
 
-- **L1**: Identity + context (what you're working on)
+- **L1**: Context (what you're working on) — trimmed so it fits in typical terminal widths without wrapping
 - **L2**: Session metadata (cost, limits, IDs)
-- **L3**: Worktree details (3-line mode only)
+- **L3**: Worktree details when inside a worktree, otherwise host / output style / version (3-line mode only)
+- **L4**: Host / output style / version — only emitted when L3 is showing worktree details (3-line mode only)
 
 ### Sizing
 

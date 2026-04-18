@@ -9,27 +9,37 @@
 
 **2-line** (`STATUSLINE_LINES=2`):
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | agent:review | vim:N | v2.1.97
-s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◇ thinking ~ ◎ auto | agent:review | vim:N
+s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d | user@host | ⚙️  default | v2.1.97
 ```
 
-**3-line** (`STATUSLINE_LINES=3`, default):
+**3-line** (`STATUSLINE_LINES=3`, default) — no worktree:
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🎓  learning | agent:review | vim:N | v2.1.97
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | agent:review | vim:N
+s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
+user@host | 🎓  learning | v2.1.97
+```
+
+**3-line** (`STATUSLINE_LINES=3`, default) — inside a git worktree (L3 + L4):
+```
+◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | agent:review | vim:N
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
 wt: name:feat-auth - path:~/.claude/worktrees/feat-auth - branch:worktree-feat-auth
+user@host | 🎓  learning | v2.1.97
 ```
 
-**Fresh session** (minimal data):
+**Fresh session** (minimal data, 3-line default):
 ```
-◆ Opus 4.6 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch 🛠️ | myapp | 🧠  ◇ thinking ~ ◎ auto | ⚙️  default | v2.1.97
+◆ Opus 4.6 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch 🛠️ | myapp | 🧠  ◇ thinking ~ ◎ auto
 s-id:536ea9b1 ~ s-name:-- | cost: -- ~ 1s ~ -- | 5h -- | 7d --
+user@host | ⚙️  default | v2.1.97
 ```
 
-**High usage**:
+**High usage** (3-line default):
 ```
-◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠️ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max | ⚙️  default | v2.1.97
+◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠️ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max
 s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 5h ██░░░░░░░░ 25% ↺~2h54m | 7d █████████░ 91% ↺~21h54m
+user@host | ⚙️  default | v2.1.97
 ```
 
 ## Elements Reference
@@ -48,10 +58,8 @@ s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 
 | PR | `PR #42 ✔` | PR number + merge status (clickable) | dim + yellow | `SHOW_PR` |
 | Folder | `myapp` | Workspace basename (clickable) | white | `SHOW_FOLDER` |
 | Thinking + Effort | `🧠  ◆ thinking ~ ◕ high` | Thinking state + effort level | see below | `SHOW_THINKING` / `SHOW_EFFORT` |
-| Output style | `🔎  explanatory` | Active output style | dim (default) / white | `SHOW_OUTPUT_STYLE` |
 | Agent | `agent:review` | Active agent name | dim + magenta | `SHOW_AGENT` |
 | Vim mode | `vim:N` | Current vim mode | green=N, yellow=I | `SHOW_VIM_MODE` |
-| Version | `v2.1.97` | Claude Code version | dim | `SHOW_VERSION` |
 
 ### L2: Session Metadata
 
@@ -65,13 +73,26 @@ s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 
 | 5h rate limit | `5h ███░░░ 38% ↺~2h14m` | 5-hour usage + reset countdown | `SHOW_RATE_LIMITS` |
 | 7d rate limit | `7d █░░░░ 18% ↺~4d` | 7-day usage + reset countdown | `SHOW_RATE_LIMITS` |
 
-### L3: Worktree (3-line mode only)
+### L3: Worktree or Host Row (3-line mode only)
+
+When you're inside a git worktree, L3 renders worktree details and the host/style/version row is pushed to L4. When you're not in a worktree, L3 renders the host/style/version row directly (L4 is empty).
 
 | Element | Example | Toggle |
 |---------|---------|--------|
 | Worktree name | `wt: name:feat-auth` | `SHOW_WORKTREE` |
 | Worktree path | `- path:/home/...` | `SHOW_WORKTREE` |
 | Worktree branch | `- branch:wt-feat-auth` (clickable) | `SHOW_WORKTREE` |
+| User@host | `phorvicheka@DESKTOP-NVB94AN` | (always shown) |
+| Output style | `⚙️  default` | `SHOW_OUTPUT_STYLE` |
+| Version | `v2.1.113` | `SHOW_VERSION` |
+
+### L4: Host Row (3-line mode, only when L3 is worktree)
+
+| Element | Example | Toggle |
+|---------|---------|--------|
+| User@host | `phorvicheka@DESKTOP-NVB94AN` | (always shown) |
+| Output style | `⚙️  default` | `SHOW_OUTPUT_STYLE` |
+| Version | `v2.1.113` | `SHOW_VERSION` |
 
 ## Thinking & Effort
 

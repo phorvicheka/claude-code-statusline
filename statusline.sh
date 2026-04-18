@@ -879,24 +879,33 @@ assemble_line() {
 # ===========================================================================
 # Line layouts per mode
 # ===========================================================================
-# L1: model | tokens | git(branch ✔/🛠️ ↑N↓N) | folder | thinking~effort | output_style | agent | vim | version
+# L1: model | tokens | git(branch ✔/🛠️ ↑N↓N) | folder | thinking~effort | agent | vim
 # L2: s-id ~ s-name | cost: $X ~ duration ~ +N/-N | 5h rate | 7d rate
-# L3: worktree (name - path - branch)
+# L3: worktree (name - path - branch)  -- only when inside a worktree
+# L4 (or L3 if no worktree): user@host | output_style | version
 
-declare -a L1=() L2=() L3=()
+declare -a L1=() L2=() L3=() L4=()
+
+_has_worktree=false
+[[ -n "$WORKTREE_NAME" ]] && _has_worktree=true
 
 case "$STATUSLINE_LINES" in
     1)
         L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version render_session_ids render_cost_group)
         ;;
     2)
-        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
-        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_vim)
+        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_user_host render_output_style render_version)
         ;;
     *)
-        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_vim)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
-        L3=(render_worktree)
+        if $_has_worktree; then
+            L3=(render_worktree)
+            L4=(render_user_host render_output_style render_version)
+        else
+            L3=(render_user_host render_output_style render_version)
+        fi
         ;;
 esac
 
@@ -913,6 +922,11 @@ fi
 if (( ${#L3[@]} > 0 )); then
     printf '\n'
     assemble_line "${L3[@]}"
+fi
+
+if (( ${#L4[@]} > 0 )); then
+    printf '\n'
+    assemble_line "${L4[@]}"
 fi
 
 exit 0

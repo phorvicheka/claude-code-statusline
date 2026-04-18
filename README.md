@@ -6,7 +6,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ## What You Get
 
-- **3 display modes**: 1-line (compact), 2-line, or 3-line (default)
+- **3 display modes**: 1-line (compact), 2-line, or 3-line (default; grows to 4 rows inside a git worktree)
 - **Adaptive width**: Gracefully degrades across 4 terminal width tiers
 - **Color-coded progress bars**: Context window + rate limits (green/yellow/red)
 - **Model-colored names**: Amber (Opus), Blue (Sonnet), Cyan (Haiku)
