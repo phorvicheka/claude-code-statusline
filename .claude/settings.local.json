@@ -1,4 +1,11 @@
 {
-  "alwaysThinkingEnabled": true,
-  "outputStyle": "default"
+  "permissions": {
+    "allow": [
+      "Bash(cp /home/phorvicheka/.claude/statusline-package/statusline.sh /home/phorvicheka/.claude/statusline.sh)",
+      "Bash(chmod +x /home/phorvicheka/.claude/statusline.sh)",
+      "Bash(git *)"
+    ]
+  },
+  "outputStyle": "default",
+  "alwaysThinkingEnabled": true
 }

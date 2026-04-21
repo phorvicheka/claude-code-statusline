@@ -25,6 +25,7 @@ SHOW_THINKING=true   # thinking + effort combined block
 SHOW_EFFORT=true     # part of thinking+effort block
 SHOW_OUTPUT_STYLE=true
 SHOW_AGENT=true
+SHOW_ADVISOR=true
 SHOW_VIM_MODE=true
 SHOW_VERSION=true
 SHOW_SESSION_ID=true
@@ -720,6 +721,36 @@ render_agent() {
     printf '%bagent:%b%s%b' "$C_DIM" "$C_MAGENTA" "$AGENT_NAME" "$C_RESET"
 }
 
+render_advisor() {
+    $SHOW_ADVISOR || return
+    local model=""
+    # 1. Parse transcript for most recent /advisor command output (session-only)
+    if [[ -z "$model" && -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
+        model=$(tac "$TRANSCRIPT_PATH" 2>/dev/null \
+            | grep -m1 '"content":"<local-command-stdout>Advisor set to' \
+            | grep -oP '(?:Advisor set to )\K\w+' \
+            | head -1 || true)
+        [[ -n "$model" ]] && model="${model,,}"
+    fi
+    # 2. Fall back to advisorModel in settings JSON (persisted default)
+    if [[ -z "$model" ]]; then
+        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+                  "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+            [[ -f "$f" ]] || continue
+            local v
+            v=$(jq -r 'if has("advisorModel") then .advisorModel else empty end' "$f" 2>/dev/null)
+            [[ -n "$v" ]] && model="${v,,}" && break
+        done
+    fi
+    [[ -z "$model" || "$model" == "off" ]] && return
+    local color="$C_BLUE"
+    case "$model" in
+        *opus*)  color="$C_AMBER" ;;
+        *haiku*) color="$C_CYAN"  ;;
+    esac
+    printf '%badvisor:%b%s%b' "$C_DIM" "$color" "$model" "$C_RESET"
+}
+
 render_vim() {
     $SHOW_VIM_MODE || return
     [[ -z "$VIM_MODE" ]] && return
@@ -891,14 +922,14 @@ _has_worktree=false
 
 case "$STATUSLINE_LINES" in
     1)
-        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_vim render_version render_session_ids render_cost_group)
+        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_advisor render_vim render_version render_session_ids render_cost_group)
         ;;
     2)
-        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_vim)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_advisor render_vim)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_user_host render_output_style render_version)
         ;;
     *)
-        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_vim)
+        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_advisor render_vim)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         if $_has_worktree; then
             L3=(render_worktree)

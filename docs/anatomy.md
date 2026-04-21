@@ -59,6 +59,7 @@ user@host | ⚙️  default | v2.1.97
 | Folder | `myapp` | Workspace basename (clickable) | white | `SHOW_FOLDER` |
 | Thinking + Effort | `🧠  ◆ thinking ~ ◕ high` | Thinking state + effort level | see below | `SHOW_THINKING` / `SHOW_EFFORT` |
 | Agent | `agent:review` | Active agent name | dim + magenta | `SHOW_AGENT` |
+| Advisor | `advisor:opus` | Advisor model (`/advisor [opus\|sonnet\|off]`) | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_ADVISOR` |
 | Vim mode | `vim:N` | Current vim mode | green=N, yellow=I | `SHOW_VIM_MODE` |
 
 ### L2: Session Metadata
