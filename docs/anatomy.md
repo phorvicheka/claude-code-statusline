@@ -85,6 +85,7 @@ When you're inside a git worktree, L3 renders worktree details and the host/styl
 | Worktree branch | `- branch:wt-feat-auth` (clickable) | `SHOW_WORKTREE` |
 | User@host | `phorvicheka@DESKTOP-NVB94AN` | (always shown) |
 | Output style | `⚙️  default` | `SHOW_OUTPUT_STYLE` |
+| Caveman mode | `◕  caveman` / `●  caveman:ultra` | `SHOW_CAVEMAN` |
 | Version | `v2.1.113` | `SHOW_VERSION` |
 
 ### L4: Host Row (3-line mode, only when L3 is worktree)
@@ -93,7 +94,21 @@ When you're inside a git worktree, L3 renders worktree details and the host/styl
 |---------|---------|--------|
 | User@host | `phorvicheka@DESKTOP-NVB94AN` | (always shown) |
 | Output style | `⚙️  default` | `SHOW_OUTPUT_STYLE` |
+| Caveman mode | `◕  caveman` / `●  caveman:ultra` | `SHOW_CAVEMAN` |
 | Version | `v2.1.113` | `SHOW_VERSION` |
+
+### Caveman Mode Icons
+
+| Mode | Icon | Label |
+|------|------|-------|
+| `lite` | ◔ | `caveman:lite` |
+| `full` (default) | ◕ | `caveman` |
+| `ultra` | ● | `caveman:ultra` |
+| `wenyan-lite` | ◔ 文 | `caveman:wenyan-lite` |
+| `wenyan` / `wenyan-full` | ◕ 文 | `caveman:wenyan` |
+| `wenyan-ultra` | ● 文 | `caveman:wenyan-ultra` |
+| `commit` | ✍️ | `caveman:commit` |
+| `review` | ⊙ | `caveman:review` |
 
 ## Thinking & Effort
 

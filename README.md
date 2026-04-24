@@ -38,7 +38,7 @@ In my Claude Code statusline at ~/.claude/statusline.sh, set SHOW_<ELEMENT>=fals
 
 > Example: `...set SHOW_COST_GROUP=false and SHOW_OUTPUT_STYLE=false for: cost group, output style...`
 >
-> Available elements: `MODEL`, `TOKENS`, `GIT`, `FOLDER`, `THINKING`, `EFFORT`, `OUTPUT_STYLE`, `AGENT`, `VIM_MODE`, `VERSION`, `SESSION_ID`, `SESSION_NAME`, `COST_GROUP`, `RATE_LIMITS`, `WORKTREE`, `PR`, `CLICKABLE_LINKS`
+> Available elements: `MODEL`, `TOKENS`, `GIT`, `FOLDER`, `THINKING`, `EFFORT`, `OUTPUT_STYLE`, `CAVEMAN`, `AGENT`, `ADVISOR`, `VIM_MODE`, `VERSION`, `SESSION_ID`, `SESSION_NAME`, `COST_GROUP`, `RATE_LIMITS`, `WORKTREE`, `PR`, `CLICKABLE_LINKS`
 
 **Uninstall**:
 

@@ -24,6 +24,7 @@ SHOW_FOLDER=true
 SHOW_THINKING=true   # thinking + effort combined block
 SHOW_EFFORT=true     # part of thinking+effort block
 SHOW_OUTPUT_STYLE=true
+SHOW_CAVEMAN=true
 SHOW_AGENT=true
 SHOW_ADVISOR=true
 SHOW_VIM_MODE=true
@@ -715,6 +716,28 @@ render_output_style() {
     printf '%s  %b%s%b' "$icon" "$label_color" "$label" "$C_RESET"
 }
 
+render_caveman() {
+    $SHOW_CAVEMAN || return
+    local flag="$HOME/.claude/.caveman-active"
+    [[ -f "$flag" ]] || return
+    local mode
+    mode=$(cat "$flag" 2>/dev/null | tr -d '[:space:]')
+    [[ -z "$mode" ]] && mode="full"
+    local icon label
+    case "$mode" in
+        lite)               icon="◔"; label="caveman:lite" ;;
+        full)               icon="◕"; label="caveman" ;;
+        ultra)              icon="●"; label="caveman:ultra" ;;
+        wenyan-lite)        icon="◔ 文"; label="caveman:wenyan-lite" ;;
+        wenyan|wenyan-full) icon="◕ 文"; label="caveman:wenyan" ;;
+        wenyan-ultra)       icon="● 文"; label="caveman:wenyan-ultra" ;;
+        commit)             icon="✍️"; label="caveman:commit" ;;
+        review)             icon="⊙"; label="caveman:review" ;;
+        *)                  icon="◕"; label="caveman:${mode}" ;;
+    esac
+    printf '%s  \033[38;5;172m%s\033[0m' "$icon" "$label"
+}
+
 render_agent() {
     $SHOW_AGENT || return
     [[ -z "$AGENT_NAME" ]] && return
@@ -922,20 +945,20 @@ _has_worktree=false
 
 case "$STATUSLINE_LINES" in
     1)
-        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_advisor render_vim render_version render_session_ids render_cost_group)
+        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_caveman render_agent render_advisor render_vim render_version render_session_ids render_cost_group)
         ;;
     2)
         L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_advisor render_vim)
-        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_user_host render_output_style render_version)
+        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_user_host render_output_style render_caveman render_version)
         ;;
     *)
         L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_advisor render_vim)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         if $_has_worktree; then
             L3=(render_worktree)
-            L4=(render_user_host render_output_style render_version)
+            L4=(render_user_host render_output_style render_caveman render_version)
         else
-            L3=(render_user_host render_output_style render_version)
+            L3=(render_user_host render_output_style render_caveman render_version)
         fi
         ;;
 esac
