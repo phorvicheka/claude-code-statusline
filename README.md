@@ -6,14 +6,15 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ## What You Get
 
-- **3 display modes**: 1-line (compact), 2-line, or 3-line (default; grows to 4 rows inside a git worktree)
+- **3 display modes**: 1-line (compact), 2-line, or 3-line (default; grows to 4 rows inside a git worktree; version shown next to model on all modes)
 - **Adaptive width**: Gracefully degrades across 4 terminal width tiers
 - **Color-coded progress bars**: Context window + rate limits (green/yellow/red)
 - **Model-colored names**: Amber (Opus), Blue (Sonnet), Cyan (Haiku)
 - **Clickable links**: Branch -> GitHub, PR -> PR page, Folder -> full path
 - **Git status**: Branch, clean/dirty, ahead/behind, PR number + merge status
 - **Session info**: Cost, duration, lines changed, rate limits, worktree
-- **Thinking / Effort / Output style**: Live indicators for Claude's current mode
+- **Settings group** (`settings:`): Thinking, effort, and advisor grouped on L3 in 3-line mode
+- **Output group** (`output:`): Output style and caveman mode grouped on L3 in 3-line mode
 - **Cross-platform**: Works on Linux, macOS, WSL, and Windows (Git Bash)
 - **Pure bash + jq**: No additional dependencies
 

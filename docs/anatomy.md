@@ -4,42 +4,42 @@
 
 **1-line** (`STATUSLINE_LINES=1`):
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | 🔎  explanatory | vim:N | v2.1.97 | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
+user@host | ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔  ~ PR #42 ✔ | myapp | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: 🔎  explanatory | agent:review | vim:N | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
 ```
 
 **2-line** (`STATUSLINE_LINES=2`):
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◇ thinking ~ ◎ auto | agent:review | vim:N
-s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d | user@host | ⚙️  default | v2.1.97
+◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | agent:review | vim:N
+s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d | user@host | settings: 🧠  ◇ thinking ~ ◎ auto ~ advisor:opus | output: ⚙️  default
 ```
 
 **3-line** (`STATUSLINE_LINES=3`, default) — no worktree:
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | agent:review | vim:N
+◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | agent:review | vim:N
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
-user@host | 🎓  learning | v2.1.97
+user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: 🎓  learning ~ ◕  caveman
 ```
 
 **3-line** (`STATUSLINE_LINES=3`, default) — inside a git worktree (L3 + L4):
 ```
-◆ Opus 4.6 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | 🧠  ◆ thinking ~ ◕ high | agent:review | vim:N
+◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | agent:review | vim:N
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
 wt: name:feat-auth - path:~/.claude/worktrees/feat-auth - branch:worktree-feat-auth
-user@host | 🎓  learning | v2.1.97
+user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: 🎓  learning ~ ◕  caveman
 ```
 
 **Fresh session** (minimal data, 3-line default):
 ```
-◆ Opus 4.6 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch 🛠️ | myapp | 🧠  ◇ thinking ~ ◎ auto
+◆ Opus 4.6 ~ v2.1.97 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch 🛠️ | myapp
 s-id:536ea9b1 ~ s-name:-- | cost: -- ~ 1s ~ -- | 5h -- | 7d --
-user@host | ⚙️  default | v2.1.97
+user@host | settings: 🧠  ◇ thinking ~ ◎ auto | output: ⚙️  default
 ```
 
 **High usage** (3-line default):
 ```
-◆ Opus 4.6 | ████░░░░░░ 40% 395k/1.0m ⚠️ | ⎇ main ✔ | myapp | 🧠  ◆ thinking ~ ● max
+◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 40% 395k/1.0m ⚠️ | ⎇ main ✔ | myapp
 s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 5h ██░░░░░░░░ 25% ↺~2h54m | 7d █████████░ 91% ↺~21h54m
-user@host | ⚙️  default | v2.1.97
+user@host | settings: 🧠  ◆ thinking ~ ● max | output: ⚙️  default
 ```
 
 ## Elements Reference
@@ -48,7 +48,7 @@ user@host | ⚙️  default | v2.1.97
 
 | Element | Example | Meaning | Color | Toggle |
 |---------|---------|---------|-------|--------|
-| Model | `◆ Opus 4.6` | Current Claude model | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_MODEL` |
+| Model | `◆ Opus 4.6 ~ v2.1.97` | Current Claude model + version | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_MODEL` / `SHOW_VERSION` |
 | Context bar | `████░░░░░░ 48%` | Context window used | green <50%, yellow 50-74%, red >=75% | `SHOW_TOKENS` |
 | Token counts | `395k/1.0m` | Used / max tokens | white / dim | `SHOW_TOKENS` |
 | Context warning | `⚠️` | Exceeds 200k tokens | red | `SHOW_TOKENS` |
@@ -57,10 +57,8 @@ user@host | ⚙️  default | v2.1.97
 | Ahead/Behind | `↑2` `↓1` | Commits ahead/behind upstream | green / red | `SHOW_GIT` |
 | PR | `PR #42 ✔` | PR number + merge status (clickable) | dim + yellow | `SHOW_PR` |
 | Folder | `myapp` | Workspace basename (clickable) | white | `SHOW_FOLDER` |
-| Thinking + Effort | `🧠  ◆ thinking ~ ◕ high` | Thinking state + effort level | see below | `SHOW_THINKING` / `SHOW_EFFORT` |
-| Agent | `agent:review` | Active agent name | dim + magenta | `SHOW_AGENT` |
-| Advisor | `advisor:opus` | Advisor model (`/advisor [opus\|sonnet\|off]`) | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_ADVISOR` |
-| Vim mode | `vim:N` | Current vim mode | green=N, yellow=I | `SHOW_VIM_MODE` |
+| Agent | `agent:review` | Active agent name (when active) | dim + magenta | `SHOW_AGENT` |
+| Vim mode | `vim:N` | Current vim mode (when active) | green=N, yellow=I | `SHOW_VIM_MODE` |
 
 ### L2: Session Metadata
 
@@ -76,7 +74,7 @@ user@host | ⚙️  default | v2.1.97
 
 ### L3: Worktree or Host Row (3-line mode only)
 
-When you're inside a git worktree, L3 renders worktree details and the host/style/version row is pushed to L4. When you're not in a worktree, L3 renders the host/style/version row directly (L4 is empty).
+When you're inside a git worktree, L3 renders worktree details and the host/settings/output row is pushed to L4. When you're not in a worktree, L3 renders the host/settings/output row directly (L4 is empty).
 
 | Element | Example | Toggle |
 |---------|---------|--------|
@@ -84,18 +82,16 @@ When you're inside a git worktree, L3 renders worktree details and the host/styl
 | Worktree path | `- path:/home/...` | `SHOW_WORKTREE` |
 | Worktree branch | `- branch:wt-feat-auth` (clickable) | `SHOW_WORKTREE` |
 | User@host | `phorvicheka@DESKTOP-NVB94AN` | (always shown) |
-| Output style | `⚙️  default` | `SHOW_OUTPUT_STYLE` |
-| Caveman mode | `◕  caveman` / `●  caveman:ultra` | `SHOW_CAVEMAN` |
-| Version | `v2.1.113` | `SHOW_VERSION` |
+| Settings group | `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
+| Output group | `output: ⚙️  default ~ ◕  caveman` | `SHOW_OUTPUT_STYLE` / `SHOW_CAVEMAN` |
 
 ### L4: Host Row (3-line mode, only when L3 is worktree)
 
 | Element | Example | Toggle |
 |---------|---------|--------|
 | User@host | `phorvicheka@DESKTOP-NVB94AN` | (always shown) |
-| Output style | `⚙️  default` | `SHOW_OUTPUT_STYLE` |
-| Caveman mode | `◕  caveman` / `●  caveman:ultra` | `SHOW_CAVEMAN` |
-| Version | `v2.1.113` | `SHOW_VERSION` |
+| Settings group | `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
+| Output group | `output: ⚙️  default ~ ◕  caveman` | `SHOW_OUTPUT_STYLE` / `SHOW_CAVEMAN` |
 
 ### Caveman Mode Icons
 
@@ -112,7 +108,7 @@ When you're inside a git worktree, L3 renders worktree details and the host/styl
 
 ## Thinking & Effort
 
-Rendered as a combined block: `🧠  ◆ thinking ~ ◕ high`
+Rendered as part of the `settings:` group on L3 (3-line mode) or as standalone elements on 1-line/2-line modes: `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus`
 
 **Thinking state** -- `◆` (on) / `◇` (off):
 
@@ -145,9 +141,9 @@ Set via `/effort <level>` or `/config`. Setting to `auto` removes the key from s
 
 > **Note:** `/effort max` is session-only and does not persist to `settings.json`. The statusline detects it by parsing the transcript JSONL file. Avoid setting `CLAUDE_CODE_EFFORT_LEVEL` in `settings.json` `env` block — it overrides `/effort` at runtime.
 
-## Output Style
+## Output Style & Caveman
 
-Reads from `output_style.name` in statusline JSON, falling back to `outputStyle` in `settings.local.json`.
+Rendered as the `output:` group on L3 (3-line mode): `output: ⚙️  default ~ ◕  caveman`. Reads from `output_style.name` in statusline JSON, falling back to `outputStyle` in `settings.local.json`.
 
 | Style | Icon | Set via |
 |-------|------|---------|
