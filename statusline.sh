@@ -55,7 +55,7 @@ fi
 
 # ── Sizing ──
 GIT_CACHE_TTL=5         # seconds to cache git status
-MAX_BRANCH_LEN=80       # truncate branch names beyond this (full tier)
+MAX_BRANCH_LEN=50       # truncate branch names beyond this (full tier)
 TOKEN_BAR_WIDTH=10      # context bar width in characters
 RATE_BAR_WIDTH=10       # rate limit bar width in characters
 
@@ -245,8 +245,28 @@ if [[ "${TERM_WIDTH:-0}" -le 0 ]] 2>/dev/null; then
         [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=200
         unset _w
     else
-        # No terminal (piped by Claude Code) — default to full tier
-        TERM_WIDTH=200
+        # Piped by Claude Code — try /dev/tty, then walk process tree for parent pts.
+        _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') || _w=0
+        if [[ "${_w:-0}" -le 0 ]]; then
+            # Claude Code doesn't pass a controlling terminal, but a parent process
+            # (the claude binary itself) still has the pts device open.
+            # Walk up to 5 ancestors looking for a pts fd.
+            _pid=$$
+            for _i in 1 2 3 4 5; do
+                _ppid=$(awk '{print $4}' /proc/$_pid/stat 2>/dev/null) || break
+                [[ -z "$_ppid" || "$_ppid" == "0" ]] && break
+                _pts=$(readlink /proc/$_ppid/fd/[0-9]* 2>/dev/null \
+                       | awk '/\/dev\/pts\//{print; exit}')
+                if [[ -n "$_pts" ]]; then
+                    _w=$(stty size < "$_pts" 2>/dev/null | awk '{print $2}')
+                    [[ "${_w:-0}" -gt 0 ]] && break
+                fi
+                _pid=$_ppid
+            done
+            unset _pid _ppid _pts _i
+        fi
+        [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=200
+        unset _w
     fi
 fi
 
@@ -264,6 +284,17 @@ case "$TIER" in
     compact) _branch_max=30; _token_bar=6; _rate_bar=6 ;;
     narrow)  _branch_max=15; _token_bar=4; _rate_bar=4 ;;
 esac
+
+# Dynamic folder cap: show as much as fits in L1 without overflowing TERM_WIDTH.
+# Fixed L1 overhead ≈ 70 chars (model + seps + tokens + git-prefix + dirty-indicator).
+_folder_max=$(( TERM_WIDTH - 70 - _branch_max ))
+(( _folder_max < 10 )) && _folder_max=10
+
+if [[ "${STATUSLINE_DEBUG:-0}" == "1" ]]; then
+    printf 'TERM_WIDTH=%s TIER=%s _branch_max=%s _folder_max=%s\n' \
+        "$TERM_WIDTH" "$TIER" "$_branch_max" "$_folder_max" \
+        >> "${HOME}/.claude/statusline-debug.log"
+fi
 
 # In narrow tier, force single line
 if [[ "$TIER" == "narrow" ]]; then
@@ -602,11 +633,13 @@ render_folder() {
     norm="${norm%/}"
     local basename="${norm##*/}"
     [[ -z "$basename" ]] && return
+    local display_name
+    display_name=$(truncate_str "$basename" "$_folder_max")
     # file:// URL — Windows drive paths need three slashes (file:///C:/...)
     local file_url="file://${norm}"
     [[ "$norm" =~ ^[A-Za-z]: ]] && file_url="file:///${norm}"
     local folder_text
-    folder_text=$(make_link "$file_url" "${C_WHITE}${basename}${C_RESET}")
+    folder_text=$(make_link "$file_url" "${C_WHITE}${display_name}${C_RESET}")
     printf '%b' "$folder_text"
 }
 
@@ -888,25 +921,30 @@ render_rate_7d() {
     _render_rate "7d" "$RATE_7D_PCT" "$RATE_7D_RESETS"
 }
 
-# Worktree: name, path, branch (clickable branch link)
+# Worktree: name + branch (path omitted — too long, wraps physical rows).
+# Each element is capped so the whole line fits in one terminal row.
 render_worktree() {
     $SHOW_WORKTREE || return
     [[ -z "$WORKTREE_NAME" ]] && return
+    # Budget: TERM_WIDTH minus "wt: name:" (9) + " - branch:" (10) + separators ≈ 25 overhead
+    local _wt_budget=$(( TERM_WIDTH - 25 ))
+    local _wt_half=$(( _wt_budget / 2 ))
+    (( _wt_half < 10 )) && _wt_half=10
+    local display_name
+    display_name=$(truncate_str "$WORKTREE_NAME" "$_wt_half")
     local out="${C_DIM}wt:${C_RESET}"
-    out+=" ${C_DIM}name:${C_RESET}${C_CYAN}${WORKTREE_NAME}${C_RESET}"
-    if [[ -n "$WORKTREE_PATH" ]]; then
-        out+=" ${C_DIM}- path:${C_RESET}${C_WHITE}${WORKTREE_PATH}${C_RESET}"
-    fi
+    out+=" ${C_DIM}name:${C_RESET}${C_CYAN}${display_name}${C_RESET}"
     if [[ -n "$WORKTREE_BRANCH" ]]; then
-        local branch_text="${C_BLUE}${WORKTREE_BRANCH}${C_RESET}"
-        # get_git_info result is cached so this is cheap
+        local display_branch
+        display_branch=$(truncate_str "$WORKTREE_BRANCH" "$_wt_half")
+        local branch_text="${C_BLUE}${display_branch}${C_RESET}"
         local wt_git_info remote_url=""
         wt_git_info=$(get_git_info "$CWD")
         if [[ -n "$wt_git_info" ]]; then
             IFS=$'\t' read -r _ _ _ _ remote_url _ _ _ <<< "$wt_git_info"
         fi
         if [[ -n "$remote_url" ]]; then
-            branch_text=$(make_link "${remote_url}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${WORKTREE_BRANCH}${C_RESET}")
+            branch_text=$(make_link "${remote_url}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${display_branch}${C_RESET}")
         fi
         out+=" ${C_DIM}- branch:${C_RESET}${branch_text}"
     fi
