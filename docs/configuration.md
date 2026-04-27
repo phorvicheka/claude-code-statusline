@@ -37,7 +37,9 @@ SHOW_FOLDER=true
 SHOW_THINKING=true      # thinking + effort combined block
 SHOW_EFFORT=true        # part of thinking+effort block
 SHOW_OUTPUT_STYLE=true
+SHOW_CAVEMAN=true
 SHOW_AGENT=true
+SHOW_ADVISOR=true
 SHOW_VIM_MODE=true
 SHOW_VERSION=true
 SHOW_SESSION_ID=true
@@ -60,9 +62,9 @@ L1=(render_model render_tokens render_git render_folder render_thinking_effort r
 L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
 # Inside a git worktree:
 L3=(render_worktree)
-L4=(render_user_host render_output_style render_version)
+L4=(render_user_host render_output_style render_caveman render_version)
 # Otherwise (no worktree) L3 absorbs L4's elements and L4 is empty:
-# L3=(render_user_host render_output_style render_version)
+# L3=(render_user_host render_output_style render_caveman render_version)
 ```
 
 - **L1**: Context (what you're working on) — trimmed so it fits in typical terminal widths without wrapping

@@ -24,6 +24,7 @@ SHOW_FOLDER=true
 SHOW_THINKING=true   # thinking + effort combined block
 SHOW_EFFORT=true     # part of thinking+effort block
 SHOW_OUTPUT_STYLE=true
+SHOW_CAVEMAN=true
 SHOW_AGENT=true
 SHOW_ADVISOR=true
 SHOW_VIM_MODE=true
@@ -506,6 +507,9 @@ render_model() {
     short="${short%% (*}"
     [[ "$TIER" == "narrow" ]] && short="${short// /}"
     printf '%b◆ %s%b' "$color" "$short" "$C_RESET"
+    if $SHOW_VERSION && [[ -n "$CC_VERSION" ]]; then
+        printf '%b ~ v%s%b' "$C_DIM" "$CC_VERSION" "$C_RESET"
+    fi
 }
 
 render_tokens() {
@@ -715,6 +719,28 @@ render_output_style() {
     printf '%s  %b%s%b' "$icon" "$label_color" "$label" "$C_RESET"
 }
 
+render_caveman() {
+    $SHOW_CAVEMAN || return
+    local flag="$HOME/.claude/.caveman-active"
+    [[ -f "$flag" ]] || return
+    local mode
+    mode=$(cat "$flag" 2>/dev/null | tr -d '[:space:]')
+    [[ -z "$mode" ]] && mode="full"
+    local icon label
+    case "$mode" in
+        lite)               icon="◔"; label="caveman:lite" ;;
+        full)               icon="◕"; label="caveman" ;;
+        ultra)              icon="●"; label="caveman:ultra" ;;
+        wenyan-lite)        icon="◔ 文"; label="caveman:wenyan-lite" ;;
+        wenyan|wenyan-full) icon="◕ 文"; label="caveman:wenyan" ;;
+        wenyan-ultra)       icon="● 文"; label="caveman:wenyan-ultra" ;;
+        commit)             icon="✍️"; label="caveman:commit" ;;
+        review)             icon="⊙"; label="caveman:review" ;;
+        *)                  icon="◕"; label="caveman:${mode}" ;;
+    esac
+    printf '%s  \033[38;5;172m%s\033[0m' "$icon" "$label"
+}
+
 render_agent() {
     $SHOW_AGENT || return
     [[ -z "$AGENT_NAME" ]] && return
@@ -760,6 +786,8 @@ render_vim() {
     printf '%bvim:%b%s%b' "$C_DIM" "$color" "$mode_short" "$C_RESET"
 }
 
+# render_version: version is now embedded in render_model (controlled by SHOW_VERSION).
+# Kept here for custom layouts that want version as a standalone segment.
 render_version() {
     $SHOW_VERSION || return
     [[ -z "$CC_VERSION" ]] && return
@@ -885,6 +913,38 @@ render_worktree() {
     printf '%b' "$out"
 }
 
+# Combined settings group: settings: thinking~effort~advisor (for L3)
+render_settings_group() {
+    ($SHOW_THINKING || $SHOW_EFFORT || $SHOW_ADVISOR) || return
+    local te_out adv_out
+    te_out=$(render_thinking_effort 2>/dev/null)
+    adv_out=$(render_advisor 2>/dev/null)
+    [[ -z "$te_out" && -z "$adv_out" ]] && return
+    local out="${C_DIM}settings:${C_RESET}"
+    [[ -n "$te_out" ]] && out+=" ${te_out}"
+    if [[ -n "$adv_out" ]]; then
+        [[ -n "$te_out" ]] && out+="${TILDE}" || out+=" "
+        out+="${adv_out}"
+    fi
+    printf '%b' "$out"
+}
+
+# Combined output group: output: output_style~caveman (for L3)
+render_output_group() {
+    ($SHOW_OUTPUT_STYLE || $SHOW_CAVEMAN) || return
+    local os_out cv_out
+    os_out=$(render_output_style 2>/dev/null)
+    cv_out=$(render_caveman 2>/dev/null)
+    [[ -z "$os_out" && -z "$cv_out" ]] && return
+    local out="${C_DIM}output:${C_RESET}"
+    [[ -n "$os_out" ]] && out+=" ${os_out}"
+    if [[ -n "$cv_out" ]]; then
+        [[ -n "$os_out" ]] && out+="${TILDE}" || out+=" "
+        out+="${cv_out}"
+    fi
+    printf '%b' "$out"
+}
+
 # ===========================================================================
 # Line assembly
 # ===========================================================================
@@ -910,10 +970,10 @@ assemble_line() {
 # ===========================================================================
 # Line layouts per mode
 # ===========================================================================
-# L1: model | tokens | git(branch ✔/🛠️ ↑N↓N) | folder | thinking~effort | agent | vim
+# L1: model ~ version | tokens | git(branch ✔/🛠️ ↑N↓N) | folder | agent | vim
 # L2: s-id ~ s-name | cost: $X ~ duration ~ +N/-N | 5h rate | 7d rate
 # L3: worktree (name - path - branch)  -- only when inside a worktree
-# L4 (or L3 if no worktree): user@host | output_style | version
+# L4 (or L3 if no worktree): user@host | settings: thinking~effort~advisor | output: style~caveman
 
 declare -a L1=() L2=() L3=() L4=()
 
@@ -922,20 +982,20 @@ _has_worktree=false
 
 case "$STATUSLINE_LINES" in
     1)
-        L1=(render_user_host render_model render_tokens render_git render_folder render_thinking_effort render_output_style render_agent render_advisor render_vim render_version render_session_ids render_cost_group)
+        L1=(render_user_host render_model render_tokens render_git render_folder render_settings_group render_output_group render_agent render_vim render_session_ids render_cost_group)
         ;;
     2)
-        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_advisor render_vim)
-        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_user_host render_output_style render_version)
+        L1=(render_model render_tokens render_git render_folder render_agent render_vim)
+        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_user_host render_settings_group render_output_group)
         ;;
     *)
-        L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_advisor render_vim)
+        L1=(render_model render_tokens render_git render_folder render_agent render_vim)
         L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
         if $_has_worktree; then
             L3=(render_worktree)
-            L4=(render_user_host render_output_style render_version)
+            L4=(render_user_host render_settings_group render_output_group)
         else
-            L3=(render_user_host render_output_style render_version)
+            L3=(render_user_host render_settings_group render_output_group)
         fi
         ;;
 esac
