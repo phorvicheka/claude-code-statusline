@@ -921,32 +921,46 @@ render_rate_7d() {
     _render_rate "7d" "$RATE_7D_PCT" "$RATE_7D_RESETS"
 }
 
-# Worktree: name + branch (path omitted — too long, wraps physical rows).
+# Worktree: name + path. Branch omitted if it matches the git branch (L1).
 # Each element is capped so the whole line fits in one terminal row.
 render_worktree() {
     $SHOW_WORKTREE || return
     [[ -z "$WORKTREE_NAME" ]] && return
-    # Budget: TERM_WIDTH minus "wt: name:" (9) + " - branch:" (10) + separators ≈ 25 overhead
-    local _wt_budget=$(( TERM_WIDTH - 25 ))
+    # Budget: TERM_WIDTH minus "wt: name:" (9) + " - path:" (8) + separators ≈ 20 overhead
+    local _wt_budget=$(( TERM_WIDTH - 20 ))
     local _wt_half=$(( _wt_budget / 2 ))
     (( _wt_half < 10 )) && _wt_half=10
     local display_name
     display_name=$(truncate_str "$WORKTREE_NAME" "$_wt_half")
     local out="${C_DIM}wt:${C_RESET}"
     out+=" ${C_DIM}name:${C_RESET}${C_CYAN}${display_name}${C_RESET}"
+
+    # Show path
+    local display_path
+    display_path=$(truncate_str "$WORKTREE_PATH" "$_wt_half")
+    out+=" ${C_DIM}- path:${C_RESET}${C_WHITE}${display_path}${C_RESET}"
+
+    # Show branch only if it differs from git branch
     if [[ -n "$WORKTREE_BRANCH" ]]; then
-        local display_branch
-        display_branch=$(truncate_str "$WORKTREE_BRANCH" "$_wt_half")
-        local branch_text="${C_BLUE}${display_branch}${C_RESET}"
-        local wt_git_info remote_url=""
+        local wt_git_info g_branch_from_git=""
         wt_git_info=$(get_git_info "$CWD")
         if [[ -n "$wt_git_info" ]]; then
-            IFS=$'\t' read -r _ _ _ _ remote_url _ _ _ <<< "$wt_git_info"
+            g_branch_from_git=$(echo "$wt_git_info" | cut -f1)
         fi
-        if [[ -n "$remote_url" ]]; then
-            branch_text=$(make_link "${remote_url}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${display_branch}${C_RESET}")
+        # Only show branch if it's different from the git branch
+        if [[ "$WORKTREE_BRANCH" != "$g_branch_from_git" ]]; then
+            local display_branch
+            display_branch=$(truncate_str "$WORKTREE_BRANCH" "$_wt_half")
+            local branch_text="${C_BLUE}${display_branch}${C_RESET}"
+            local remote_url=""
+            if [[ -n "$wt_git_info" ]]; then
+                remote_url=$(echo "$wt_git_info" | cut -f5)
+            fi
+            if [[ -n "$remote_url" ]]; then
+                branch_text=$(make_link "${remote_url}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${display_branch}${C_RESET}")
+            fi
+            out+=" ${C_DIM}- branch:${C_RESET}${branch_text}"
         fi
-        out+=" ${C_DIM}- branch:${C_RESET}${branch_text}"
     fi
     printf '%b' "$out"
 }
