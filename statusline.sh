@@ -926,8 +926,8 @@ render_rate_7d() {
 render_worktree() {
     $SHOW_WORKTREE || return
     [[ -z "$WORKTREE_NAME" ]] && return
-    # Budget: TERM_WIDTH minus "wt: name:" (9) + " - path:" (8) + separators ≈ 20 overhead
-    local _wt_budget=$(( TERM_WIDTH - 20 ))
+    # Budget: TERM_WIDTH minus fixed overhead — let path expand to fill available width
+    local _wt_budget=$(( TERM_WIDTH ))
     local _wt_half=$(( _wt_budget / 2 ))
     (( _wt_half < 10 )) && _wt_half=10
     local display_name
