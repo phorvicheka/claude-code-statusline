@@ -24,9 +24,11 @@ user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: �
 ```
 ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | agent:review | vim:N
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
-wt: name:feat-auth - path:~/.claude/worktrees/feat-auth - branch:worktree-feat-auth
+wt: name:feat-auth - path:/home/user/projects/.git/worktrees/feat-auth
 user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: 🎓  learning ~ ◕  caveman
 ```
+
+(Branch omitted when it matches L1 git branch; shown only on different branches)
 
 **Fresh session** (minimal data, 3-line default):
 ```
@@ -79,8 +81,8 @@ When you're inside a git worktree, L3 renders worktree details and the host/sett
 | Element | Example | Toggle |
 |---------|---------|--------|
 | Worktree name | `wt: name:feat-auth` | `SHOW_WORKTREE` |
-| Worktree path | `- path:/home/...` | `SHOW_WORKTREE` |
-| Worktree branch | `- branch:wt-feat-auth` (clickable) | `SHOW_WORKTREE` |
+| Worktree path | `- path:/home/user/.../feat-auth` (full width) | `SHOW_WORKTREE` |
+| Worktree branch | `- branch:wt-feat-auth` (shown only if different from L1 branch, clickable) | `SHOW_WORKTREE` |
 | User@host | `phorvicheka@DESKTOP-NVB94AN` | (always shown) |
 | Settings group | `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
 | Output group | `output: ⚙️  default ~ ◕  caveman` | `SHOW_OUTPUT_STYLE` / `SHOW_CAVEMAN` |
