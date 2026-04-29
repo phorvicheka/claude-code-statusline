@@ -111,6 +111,10 @@ See [Configuration Guide](docs/configuration.md) for line count, feature toggles
 
 See [Statusline Anatomy](docs/anatomy.md) for display modes, element reference, thinking/effort details, and progress bar colors.
 
+## Performance
+
+Render time targets **< 200ms warm**. Caches `git`/`gh pr view` (60s), `settings.json` parse (30s), and `TERM_WIDTH` detection (30s) under `/tmp/claude-statusline/`. See [docs/performance.md](docs/performance.md) for benchmarks, diagnosis, and TUI redraw stacking explained.
+
 ## Known Limitations
 
 See [Known Limitations](docs/known-limitations.md) for clickable link support and rate limit data freshness.
@@ -127,7 +131,10 @@ See [Known Limitations](docs/known-limitations.md) for clickable link support an
 | Rate limits seem stale | Values update only after each assistant response. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
 | Branch link not clickable | Auto-disabled on unsupported terminals. Use Windows Terminal or `FORCE_HYPERLINK=1 claude`. |
-| Git info stale | Decrease `GIT_CACHE_TTL` or `rm -rf /tmp/claude-statusline/` |
+| Git info stale | Decrease `GIT_CACHE_TTL` (default 60s) or `rm -rf /tmp/claude-statusline/` |
+| Statusline + input box duplicated above output | TUI redraw stacking when render > ~300ms. See [docs/performance.md](docs/performance.md). The script targets < 200ms warm; if yours is slower, profile with `STATUSLINE_DEBUG=1` and bump TTLs. |
+| Effort / advisor / output style toggle slow to reflect | Settings preload cached for 30s. `rm -rf /tmp/claude-statusline/` to refresh, or lower `SETTINGS_CACHE_TTL`. |
+| Wrong width after terminal resize | Width cached per parent pid for 30s. `rm -rf /tmp/claude-statusline/` to refresh, or lower `WIDTH_CACHE_TTL`. |
 | Branch name truncated | Width detection may fail on Git Bash (now uses `tput cols` with 120-col default). Update to latest, or override: `TERM_WIDTH=<cols>` in settings.json command. |
 | Width detection wrong | Override: `TERM_WIDTH=<cols>` in settings.json command. |
 | PR# not showing | Requires `gh` CLI installed and authenticated. Hidden when no PR exists for branch. |

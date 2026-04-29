@@ -75,13 +75,18 @@ L4=(render_user_host render_output_style render_caveman render_version)
 ### Sizing
 
 ```bash
-GIT_CACHE_TTL=5         # seconds to cache git status
+GIT_CACHE_TTL=60        # cache git+PR (incl. gh pr view network) — see docs/performance.md
+SETTINGS_CACHE_TTL=30   # cache parsed settings.json values (4 files, 5 keys)
+WIDTH_CACHE_TTL=30      # cache TERM_WIDTH per parent pid (avoid /proc walk per render)
 MAX_BRANCH_LEN=80       # max branch name length (full tier)
 TOKEN_BAR_WIDTH=10      # context bar character width
 RATE_BAR_WIDTH=10       # rate limit bar character width
 THRESHOLD_GREEN=50      # below = green
 THRESHOLD_YELLOW=75     # below = yellow, above = red
 ```
+
+> Render time targets < 200ms warm. Bumping the TTLs trades freshness for CPU.
+> See [docs/performance.md](performance.md) for benchmarks and diagnosis.
 
 ### Width Tiers
 

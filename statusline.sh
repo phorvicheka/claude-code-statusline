@@ -54,7 +54,12 @@ if [[ "${FORCE_HYPERLINK:-0}" != "1" ]] && $SHOW_CLICKABLE_LINKS; then
 fi
 
 # ── Sizing ──
-GIT_CACHE_TTL=5         # seconds to cache git status
+GIT_CACHE_TTL=60        # cache git status (incl. gh pr view ~1.5s cold). bumped from 5s
+                        # to keep statusline render < 300ms so Claude Code TUI redraw
+                        # cycle does not stack frames in scrollback during long runs.
+SETTINGS_CACHE_TTL=30   # cache parsed settings.json values (4 files, 5 keys).
+                        # See docs/performance.md.
+WIDTH_CACHE_TTL=30      # cache TERM_WIDTH per parent pid (avoid /proc walk every run).
 MAX_BRANCH_LEN=50       # truncate branch names beyond this (full tier)
 TOKEN_BAR_WIDTH=10      # context bar width in characters
 RATE_BAR_WIDTH=10       # rate limit bar width in characters
@@ -226,6 +231,77 @@ if [[ -z "$WORKTREE_NAME" ]]; then
 fi
 
 # ===========================================================================
+# Settings preload (single-pass cache)
+# Replaces 6 scattered jq calls across render_thinking_effort,
+# render_output_style, render_advisor with one merged read per CWD.
+# Each renderer consumes the SETTINGS_* globals below.
+# Priority order (first non-empty wins):
+#   $CWD/.claude/settings.local.json
+#   $HOME/.claude/settings.local.json
+#   $CWD/.claude/settings.json
+#   $HOME/.claude/settings.json
+# ===========================================================================
+SETTINGS_CACHE_DIR="/tmp/claude-statusline"
+SETTINGS_THINKING=""
+SETTINGS_EFFORT_LEVEL=""
+SETTINGS_EFFORT_ENV=""
+SETTINGS_OUTPUT_STYLE=""
+SETTINGS_ADVISOR_MODEL=""
+
+_load_settings() {
+    mkdir -p "$SETTINGS_CACHE_DIR" 2>/dev/null
+    local cwd_hash
+    cwd_hash=$(printf '%s' "${CWD:-_}" | cksum | awk '{print $1}')
+    local cache_file="${SETTINGS_CACHE_DIR}/settings-${cwd_hash}"
+
+    local needs_refresh=true
+    if [[ -f "$cache_file" ]]; then
+        local mtime now age
+        mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        age=$(( now - mtime ))
+        (( age < SETTINGS_CACHE_TTL )) && needs_refresh=false
+    fi
+
+    if $needs_refresh; then
+        local thinking="" effort_level="" effort_env="" output_style="" advisor_model=""
+        local f parsed k v
+        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+                  "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+            [[ -f "$f" ]] || continue
+            # Single jq pass per file: extract all 5 keys at once
+            parsed=$(jq -r '
+                "T=" + (if has("alwaysThinkingEnabled") then (.alwaysThinkingEnabled | tostring) else "" end),
+                "E=" + (if has("effortLevel") then .effortLevel else "" end),
+                "EV=" + (.env.CLAUDE_CODE_EFFORT_LEVEL // ""),
+                "O=" + (if has("outputStyle") then .outputStyle else "" end),
+                "A=" + (if has("advisorModel") then .advisorModel else "" end)
+            ' "$f" 2>/dev/null) || continue
+            while IFS='=' read -r k v; do
+                case "$k" in
+                    T)  [[ -z "$thinking"      && -n "$v" ]] && thinking="$v" ;;
+                    E)  [[ -z "$effort_level"  && -n "$v" ]] && effort_level="$v" ;;
+                    EV) [[ -z "$effort_env"    && -n "$v" ]] && effort_env="$v" ;;
+                    O)  [[ -z "$output_style"  && -n "$v" ]] && output_style="$v" ;;
+                    A)  [[ -z "$advisor_model" && -n "$v" ]] && advisor_model="$v" ;;
+                esac
+            done <<< "$parsed"
+        done
+        {
+            printf 'SETTINGS_THINKING=%q\n'      "$thinking"
+            printf 'SETTINGS_EFFORT_LEVEL=%q\n'  "$effort_level"
+            printf 'SETTINGS_EFFORT_ENV=%q\n'    "$effort_env"
+            printf 'SETTINGS_OUTPUT_STYLE=%q\n'  "$output_style"
+            printf 'SETTINGS_ADVISOR_MODEL=%q\n' "$advisor_model"
+        } > "$cache_file" 2>/dev/null
+    fi
+
+    # shellcheck disable=SC1090
+    [[ -f "$cache_file" ]] && source "$cache_file" 2>/dev/null
+}
+_load_settings
+
+# ===========================================================================
 # Terminal width detection
 # When run as a statusline command, stdin is a JSON pipe — there is no TTY.
 # Tools like tput/stty return bogus defaults (80) in that context.
@@ -233,40 +309,80 @@ fi
 # to 200 (full tier) and let Claude Code handle display wrapping.
 # Override: set TERM_WIDTH in the statusLine command or env.
 # ===========================================================================
+_width_cache_key() {
+    # Key by parent pid (claude binary). Survives across statusline invocations
+    # within a single Claude Code session. Stale on terminal resize until TTL.
+    local pp
+    pp=$(awk '{print $4}' /proc/$$/stat 2>/dev/null) || pp=""
+    [[ -z "$pp" || "$pp" == "0" ]] && return 1
+    printf '%s' "$pp"
+}
+
+_get_cached_width() {
+    local key
+    key=$(_width_cache_key) || return 1
+    local cache_file="${SETTINGS_CACHE_DIR}/width-${key}"
+    [[ -f "$cache_file" ]] || return 1
+    local mtime now age
+    mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    age=$(( now - mtime ))
+    (( age < WIDTH_CACHE_TTL )) || return 1
+    cat "$cache_file" 2>/dev/null
+}
+
+_save_cached_width() {
+    local width="$1"
+    [[ "${width:-0}" -gt 0 ]] 2>/dev/null || return
+    local key
+    key=$(_width_cache_key) || return
+    mkdir -p "$SETTINGS_CACHE_DIR" 2>/dev/null
+    printf '%s' "$width" > "${SETTINGS_CACHE_DIR}/width-${key}" 2>/dev/null
+}
+
 if [[ "${TERM_WIDTH:-0}" -le 0 ]] 2>/dev/null; then
     if [[ "${COLUMNS:-0}" -gt 0 ]] 2>/dev/null; then
         TERM_WIDTH=$COLUMNS
-    elif [[ -t 1 ]]; then
-        # stdout is a terminal — detection is trustworthy
-        _w=$(tput cols 2>/dev/null) \
-            || _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') \
-            || _w=$(mode con 2>/dev/null | awk '/Columns:/{gsub(/[^0-9]/,"",$2); print $2}') \
-            || _w=0
-        [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=200
-        unset _w
     else
-        # Piped by Claude Code — try /dev/tty, then walk process tree for parent pts.
-        _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') || _w=0
-        if [[ "${_w:-0}" -le 0 ]]; then
-            # Claude Code doesn't pass a controlling terminal, but a parent process
-            # (the claude binary itself) still has the pts device open.
-            # Walk up to 5 ancestors looking for a pts fd.
-            _pid=$$
-            for _i in 1 2 3 4 5; do
-                _ppid=$(awk '{print $4}' /proc/$_pid/stat 2>/dev/null) || break
-                [[ -z "$_ppid" || "$_ppid" == "0" ]] && break
-                _pts=$(readlink /proc/$_ppid/fd/[0-9]* 2>/dev/null \
-                       | awk '/\/dev\/pts\//{print; exit}')
-                if [[ -n "$_pts" ]]; then
-                    _w=$(stty size < "$_pts" 2>/dev/null | awk '{print $2}')
-                    [[ "${_w:-0}" -gt 0 ]] && break
-                fi
-                _pid=$_ppid
-            done
-            unset _pid _ppid _pts _i
+        # Try cache first to avoid /proc walk on every render
+        _cached_w=$(_get_cached_width)
+        if [[ "${_cached_w:-0}" -gt 0 ]] 2>/dev/null; then
+            TERM_WIDTH=$_cached_w
+        elif [[ -t 1 ]]; then
+            # stdout is a terminal — detection is trustworthy
+            _w=$(tput cols 2>/dev/null) \
+                || _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') \
+                || _w=$(mode con 2>/dev/null | awk '/Columns:/{gsub(/[^0-9]/,"",$2); print $2}') \
+                || _w=0
+            [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=200
+            _save_cached_width "$TERM_WIDTH"
+            unset _w
+        else
+            # Piped by Claude Code — try /dev/tty, then walk process tree for parent pts.
+            _w=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') || _w=0
+            if [[ "${_w:-0}" -le 0 ]]; then
+                # Claude Code doesn't pass a controlling terminal, but a parent process
+                # (the claude binary itself) still has the pts device open.
+                # Walk up to 5 ancestors looking for a pts fd.
+                _pid=$$
+                for _i in 1 2 3 4 5; do
+                    _ppid=$(awk '{print $4}' /proc/$_pid/stat 2>/dev/null) || break
+                    [[ -z "$_ppid" || "$_ppid" == "0" ]] && break
+                    _pts=$(readlink /proc/$_ppid/fd/[0-9]* 2>/dev/null \
+                           | awk '/\/dev\/pts\//{print; exit}')
+                    if [[ -n "$_pts" ]]; then
+                        _w=$(stty size < "$_pts" 2>/dev/null | awk '{print $2}')
+                        [[ "${_w:-0}" -gt 0 ]] && break
+                    fi
+                    _pid=$_ppid
+                done
+                unset _pid _ppid _pts _i
+            fi
+            [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=200
+            _save_cached_width "$TERM_WIDTH"
+            unset _w
         fi
-        [[ "${_w:-0}" -gt 0 ]] 2>/dev/null && TERM_WIDTH=$_w || TERM_WIDTH=200
-        unset _w
+        unset _cached_w
     fi
 fi
 
@@ -491,23 +607,25 @@ get_git_info() {
         if [[ -n "$upstream" ]]; then
             local ab
             ab=$(git -C "$dir" rev-list --left-right --count "HEAD...${upstream}" 2>/dev/null)
-            ahead=$(echo "$ab" | awk '{print $1}')
-            behind=$(echo "$ab" | awk '{print $2}')
+            # ab format: "<ahead>\t<behind>" — split with bash, no awk fork
+            read -r ahead behind <<< "$ab"
+            ahead="${ahead:-0}"; behind="${behind:-0}"
         fi
 
         remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null)
         remote_url="${remote_url/git@github.com:/https:\/\/github.com\/}"
         remote_url="${remote_url%.git}"
 
-        # PR number + merge status via gh CLI (gracefully skip if gh not available)
+        # PR number + merge status via gh CLI (gracefully skip if gh not available).
+        # Single jq pass extracts all 3 fields as TSV (was 3 separate jq forks).
         local pr_number="" pr_url="" pr_mergeable=""
         if command -v gh >/dev/null 2>&1; then
-            local pr_json
+            local pr_json pr_tsv
             pr_json=$(cd "$dir" && gh pr view --json number,url,mergeable 2>/dev/null)
             if [[ -n "$pr_json" ]]; then
-                pr_number=$(printf '%s' "$pr_json" | jq -r '.number // empty' 2>/dev/null)
-                pr_url=$(printf '%s' "$pr_json" | jq -r '.url // empty' 2>/dev/null)
-                pr_mergeable=$(printf '%s' "$pr_json" | jq -r '.mergeable // empty' 2>/dev/null)
+                pr_tsv=$(printf '%s' "$pr_json" \
+                    | jq -r '[.number // "", .url // "", .mergeable // ""] | @tsv' 2>/dev/null)
+                IFS=$'\t' read -r pr_number pr_url pr_mergeable <<< "$pr_tsv"
             fi
         fi
 
@@ -647,17 +765,12 @@ render_folder() {
 render_thinking_effort() {
     ($SHOW_THINKING || $SHOW_EFFORT) || return
 
-    # ── thinking: from JSON IS_THINKING, fall back to settings files ──
+    # ── thinking: from JSON IS_THINKING, fall back to preloaded settings cache ──
     local thinking_icon="" thinking_color=""
     if $SHOW_THINKING; then
         local thinking_val="$IS_THINKING"
-        if [[ "$thinking_val" == "unknown" ]]; then
-            for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
-                      "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
-                [[ -f "$f" ]] || continue
-                thinking_val=$(jq -r 'if has("alwaysThinkingEnabled") then (.alwaysThinkingEnabled | tostring) else empty end' "$f" 2>/dev/null)
-                [[ -n "$thinking_val" ]] && break
-            done
+        if [[ "$thinking_val" == "unknown" && -n "$SETTINGS_THINKING" ]]; then
+            thinking_val="$SETTINGS_THINKING"
         fi
         if [[ "$thinking_val" == "true" ]]; then
             thinking_icon="◆"; thinking_color="$C_MAGENTA"
@@ -683,28 +796,14 @@ render_thinking_effort() {
                 | grep -oP '(?:Set effort level to|Effort level set to) \K(low|medium|high|xhigh|max|auto)' \
                 | head -1 || true)
         fi
-        # 3. effortLevel key in settings JSON (persisted default)
-        if [[ -z "$level" ]]; then
-            for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
-                      "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
-                [[ -f "$f" ]] || continue
-                level=$(jq -r 'if has("effortLevel") then .effortLevel else empty end' "$f" 2>/dev/null)
-                [[ -n "$level" ]] && break
-            done
-        fi
-        # 4. Fall back to CLAUDE_CODE_EFFORT_LEVEL env var
+        # 3. effortLevel key in settings JSON (preloaded cache, persisted default)
+        [[ -z "$level" && -n "$SETTINGS_EFFORT_LEVEL" ]] && level="$SETTINGS_EFFORT_LEVEL"
+        # 4. Fall back to CLAUDE_CODE_EFFORT_LEVEL env var (live)
         if [[ -z "$level" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]]; then
             level="$CLAUDE_CODE_EFFORT_LEVEL"
         fi
-        # 5. Fall back to env var defined in settings.json env blocks
-        if [[ -z "$level" ]]; then
-            for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
-                      "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
-                [[ -f "$f" ]] || continue
-                level=$(jq -r '.env.CLAUDE_CODE_EFFORT_LEVEL // empty' "$f" 2>/dev/null)
-                [[ -n "$level" ]] && break
-            done
-        fi
+        # 5. Fall back to env var defined in settings.json env blocks (preloaded cache)
+        [[ -z "$level" && -n "$SETTINGS_EFFORT_ENV" ]] && level="$SETTINGS_EFFORT_ENV"
         [[ -z "$level" ]] && level="auto"
         case "$level" in
             auto)   effort_icon="◎"; effort_color="$C_DIM" ;;
@@ -730,17 +829,9 @@ render_thinking_effort() {
 
 render_output_style() {
     $SHOW_OUTPUT_STYLE || return
-    # Use live JSON OUTPUT_STYLE first (always reflects session state)
+    # Live JSON value first (reflects session state); fall back to preloaded settings.
     local style="$OUTPUT_STYLE"
-    # Fall back to settings.local.json if JSON has no value
-    if [[ -z "$style" ]]; then
-        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json"; do
-            [[ -f "$f" ]] || continue
-            local v
-            v=$(jq -r 'if has("outputStyle") then .outputStyle else empty end' "$f" 2>/dev/null)
-            [[ -n "$v" ]] && style="$v" && break
-        done
-    fi
+    [[ -z "$style" && -n "$SETTINGS_OUTPUT_STYLE" ]] && style="$SETTINGS_OUTPUT_STYLE"
     [[ -z "$style" ]] && style="default"
     local icon label label_color="$C_DIM"
     case "$style" in
@@ -756,8 +847,11 @@ render_caveman() {
     $SHOW_CAVEMAN || return
     local flag="$HOME/.claude/.caveman-active"
     [[ -f "$flag" ]] || return
-    local mode
-    mode=$(cat "$flag" 2>/dev/null | tr -d '[:space:]')
+    local mode=""
+    # Read first line directly — no cat fork, no tr fork
+    IFS= read -r mode < "$flag" 2>/dev/null || mode=""
+    # Strip whitespace via bash parameter expansion
+    mode="${mode//[[:space:]]/}"
     [[ -z "$mode" ]] && mode="full"
     local icon label
     case "$mode" in
@@ -791,15 +885,9 @@ render_advisor() {
             | head -1 || true)
         [[ -n "$model" ]] && model="${model,,}"
     fi
-    # 2. Fall back to advisorModel in settings JSON (persisted default)
-    if [[ -z "$model" ]]; then
-        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
-                  "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
-            [[ -f "$f" ]] || continue
-            local v
-            v=$(jq -r 'if has("advisorModel") then .advisorModel else empty end' "$f" 2>/dev/null)
-            [[ -n "$v" ]] && model="${v,,}" && break
-        done
+    # 2. Fall back to advisorModel in settings JSON (preloaded cache, persisted default)
+    if [[ -z "$model" && -n "$SETTINGS_ADVISOR_MODEL" ]]; then
+        model="${SETTINGS_ADVISOR_MODEL,,}"
     fi
     [[ -z "$model" || "$model" == "off" ]] && return
     local color="$C_BLUE"
@@ -942,20 +1030,18 @@ render_worktree() {
 
     # Show branch only if it differs from git branch
     if [[ -n "$WORKTREE_BRANCH" ]]; then
-        local wt_git_info g_branch_from_git=""
+        # Parse git_info TSV once: branch + remote_url. Avoids two `echo|cut` forks.
+        local wt_git_info g_branch_from_git="" remote_url=""
         wt_git_info=$(get_git_info "$CWD")
         if [[ -n "$wt_git_info" ]]; then
-            g_branch_from_git=$(echo "$wt_git_info" | cut -f1)
+            local _f2 _f3 _f4
+            IFS=$'\t' read -r g_branch_from_git _f2 _f3 _f4 remote_url _ <<< "$wt_git_info"
         fi
         # Only show branch if it's different from the git branch
         if [[ "$WORKTREE_BRANCH" != "$g_branch_from_git" ]]; then
             local display_branch
             display_branch=$(truncate_str "$WORKTREE_BRANCH" "$_wt_half")
             local branch_text="${C_BLUE}${display_branch}${C_RESET}"
-            local remote_url=""
-            if [[ -n "$wt_git_info" ]]; then
-                remote_url=$(echo "$wt_git_info" | cut -f5)
-            fi
             if [[ -n "$remote_url" ]]; then
                 branch_text=$(make_link "${remote_url}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${display_branch}${C_RESET}")
             fi
