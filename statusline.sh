@@ -54,12 +54,14 @@ if [[ "${FORCE_HYPERLINK:-0}" != "1" ]] && $SHOW_CLICKABLE_LINKS; then
 fi
 
 # ── Sizing ──
-GIT_CACHE_TTL=60        # cache git status (incl. gh pr view ~1.5s cold). bumped from 5s
+GIT_CACHE_TTL=300       # cache git status (incl. gh pr view ~1.5s cold). bumped from 5s
                         # to keep statusline render < 300ms so Claude Code TUI redraw
                         # cycle does not stack frames in scrollback during long runs.
-SETTINGS_CACHE_TTL=30   # cache parsed settings.json values (4 files, 5 keys).
-                        # See docs/performance.md.
-WIDTH_CACHE_TTL=30      # cache TERM_WIDTH per parent pid (avoid /proc walk every run).
+                        # Bumped 60→300 for WSL2 /mnt/* (9p) hosts where git ops are slow.
+SETTINGS_CACHE_TTL=120  # cache parsed settings.json values (4 files, 5 keys).
+                        # See docs/performance.md. Bumped 30→120.
+WIDTH_CACHE_TTL=300     # cache TERM_WIDTH per parent pid (avoid /proc walk every run).
+                        # Bumped 30→300 (terminal resize rare).
 MAX_BRANCH_LEN=50       # truncate branch names beyond this (full tier)
 TOKEN_BAR_WIDTH=10      # context bar width in characters
 RATE_BAR_WIDTH=10       # rate limit bar width in characters
