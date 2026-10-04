@@ -21,6 +21,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `install.sh` / `uninstall.sh` use the same location and remove the old shared `/tmp/claude-statusline` only
   when it is yours and not a symlink.
 
+### Changed (path display)
+
+- **Path display is anchored to the project, with a `▸subdir` marker when the shell drifted.** Claude Code's `cwd`
+  follows `cd`, so after `cd .claude/memory` L1 showed `memory` and L3 showed `~/projects/app/.claude/memory`, and the
+  project was no longer visible. L1 now shows `app ▸.claude/memory` and L3 `you@host:~/projects/app ▸.claude/memory`.
+  The anchor is the worktree root inside a linked worktree, else `workspace.project_dir`; outside it the marker is the
+  absolute `~` path. Git branch, PR and the worktree row still follow the live directory.
+- The worktree row now prints the worktree **root** (it used to print the live dir, which differed from the root when
+  you were in a subdirectory); detached-HEAD branch lookup uses the root too.
+- **L1 folder is a flex segment** (marker truncates before the basename), replacing the fixed `_folder_max` guess
+  whenever L1 has no other flex segment.
+- **Host row splits onto its own row on narrower terminals** instead of dropping the path: `user@host:path` gets
+  row 3 and `settings | output` row 4 when host + anchor path + settings/output (80 cols reserved) + a 12-col marker
+  do not fit in `TERM_WIDTH`. The decision never looks at the marker, so the row count is stable while you `cd`;
+  225 columns stays 3 rows. 1-/2-line modes are unchanged.
+
 ### Fixed
 
 - **Effort showed the wrong level (e.g. `high` while the session ran `xhigh`).** Claude Code sends `effort` and
@@ -50,8 +66,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Flex session name:** `s-name:` shrinks to the columns left on the row instead of wrapping it.
 - **`statusLine.refreshInterval`** (60s) set by `install.sh` when absent (`STATUSLINE_REFRESH_INTERVAL=0` skips
   it). Keeps reset countdowns, cache TTL and git state moving while idle. It does not refresh rate-limit percentages.
-- **`tests/run.sh`:** ~70 fixture cases (xhigh, max, Haiku, legacy payloads, null fields, hostile values,
-  transcript cache, planted cache files and symlinks, PR states, badges, vim, worktree, widths) run in a sandboxed `HOME` and cache dir.
+- **`tests/run.sh`:** ~110 fixture cases (xhigh, max, Haiku, legacy payloads, null fields, hostile values,
+  transcript cache, planted cache files and symlinks, PR states, badges, vim, worktree, cwd drift and split, widths) run in a sandboxed `HOME` and cache dir.
 - `STATUSLINE_CACHE_DIR` env var to relocate the cache (used by the tests; the same symlink / ownership checks apply).
 - Debug log now records which width source won (`env`, `COLUMNS` or `probe`).
 

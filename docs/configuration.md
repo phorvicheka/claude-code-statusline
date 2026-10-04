@@ -51,7 +51,7 @@ SHOW_PR=true
 SHOW_FAST=true         # ⚡ badge while fast mode is on
 SHOW_CACHE=true        # prompt-cache warm/cold badge (L2, full tier only)
 SHOW_SPEND=true        # gateway spend-limit meter (only present behind a gateway)
-SHOW_CWD_PATH=true     # user@host:~/path on the host row
+SHOW_CWD_PATH=true     # user@host:~/project ▸subdir on the host row (project path + drift marker)
 SHOW_CLICKABLE_LINKS=true
 ```
 
@@ -108,7 +108,7 @@ Override: `TERM_WIDTH=150 claude`
 
 ### Flex segments
 
-Two segments shrink to fit the row instead of wrapping it: the cwd in `user@host:cwd` and the session name in `s-name:`. `assemble_line` renders every other segment first, measures their visible width, and hands the remainder (minus a 6-column margin for double-width emoji) to the flex segment. Rows narrower than the fixed content still overflow; that is a property of the content, not of the flex logic.
+Three segments shrink to fit the row instead of wrapping it: the folder on L1 (`myapp ▸subdir`), the path in `user@host:path ▸subdir`, and the session name in `s-name:`. Only the first flex segment on a row gets the budget (in `STATUSLINE_LINES=1` the folder keeps the static L1 cap, and in 2-line mode the host path is dropped because `s-name:` is the row's flex segment). `assemble_line` renders every other segment first, measures their visible width, and hands the remainder (minus a 6-column margin for double-width emoji) to the flex segment. Rows narrower than the fixed content still overflow; that is a property of the content, not of the flex logic.
 
 ### Refresh timer
 

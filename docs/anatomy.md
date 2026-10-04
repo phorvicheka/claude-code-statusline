@@ -59,7 +59,7 @@ user@host | settings: 🧠  ◆ thinking ~ ● max | output: ⚙️  default
 | Ahead/Behind | `↑2` `↓1` | Commits ahead/behind upstream | green / red | `SHOW_GIT` |
 | PR / MR | `PR #42 ✔` | Number + review state from `pr.*` JSON (clickable). `✔` approved, `✗` changes requested, `draft`, `…` pending. GitLab shows `MR #n` | dim + yellow | `SHOW_PR` |
 | Fast mode | `⚡` | Fast mode is on (`fast_mode`) | yellow | `SHOW_FAST` |
-| Folder | `myapp` | Workspace basename (clickable) | white | `SHOW_FOLDER` |
+| Folder | `myapp` / `myapp ▸.claude/memory` | Basename of the **anchor** (project dir, or worktree root when inside a worktree; clickable). A dim `▸subdir` follows when the shell has drifted from it (see [Where am I?](#where-am-i-anchor-and-drift-marker)) | white + dim | `SHOW_FOLDER` |
 | Agent | `agent:review` | Active agent name (when active) | dim + magenta | `SHOW_AGENT` |
 | Vim mode | `vim:N` | Current vim mode (when active): `N` normal, `I` insert, `V` visual, `VL` visual line | green=N, yellow=I, magenta=V/VL | `SHOW_VIM_MODE` |
 
@@ -79,22 +79,42 @@ user@host | settings: 🧠  ◆ thinking ~ ● max | output: ⚙️  default
 
 ### L3: Worktree or Host Row (3-line mode only)
 
-When you're inside a git worktree, L3 renders worktree details and the host/settings/output row is pushed to L4. When you're not in a worktree, L3 renders the host/settings/output row directly (L4 is empty).
+When you're inside a git worktree, L3 renders worktree details and the host/settings/output row is pushed to L4. When you're not in a worktree, L3 renders the host/settings/output row directly (L4 is empty) while the terminal is wide enough to hold host + project path + settings + output; on narrower terminals `user@host:path` takes its own row and `settings | output` moves to L4 (see [stable split](#stable-split-of-the-host-row)).
 
 | Element | Example | Toggle |
 |---------|---------|--------|
 | Worktree name | `wt: name:feat-auth` | `SHOW_WORKTREE` |
 | Worktree path | `- path:/home/user/.../feat-auth` (full width) | `SHOW_WORKTREE` |
 | Worktree branch | `- branch:wt-feat-auth` (shown only if different from L1 branch, clickable) | `SHOW_WORKTREE` |
-| User@host:cwd | `phorvicheka@DESKTOP-NVB94AN:~/projects/api` | Host, plus the PS1-style working directory. The path is left-truncated (`…/tail`) to fit the row, hidden when there is no room, and hidden when the worktree row already shows the same path | `SHOW_CWD_PATH` |
+| User@host:path ▸marker | `phorvicheka@DESKTOP-NVB94AN:~/projects/api ▸src/routes` | Host, plus the anchor (project / worktree root) path and, after a `cd`, the dim `▸subdir` marker. The path is left-truncated (`…/tail`) to fit the row and hidden when there is no room; the marker takes the room left after it and truncates first (`▸…/routes`). When the worktree row already prints the path only the marker follows the host | `SHOW_CWD_PATH` |
 | Settings group | `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
 | Output group | `output: ⚙️  default ~ ◕  caveman` | `SHOW_OUTPUT_STYLE` / `SHOW_CAVEMAN` |
+
+### Where am I? (anchor and drift marker)
+
+Claude Code's `cwd` follows the shell: a `cd` inside the session moves it, while `workspace.project_dir` stays at the launch directory. Showing only the live directory buried the project behind paths like `…/.claude/memory`, so the path display is **anchored**:
+
+| Term | Value |
+|------|-------|
+| Anchor | The worktree root when the live dir is inside a linked worktree, otherwise `workspace.project_dir`. Payloads without `project_dir` anchor on the live dir (no marker). |
+| Marker | `▸` + the live dir relative to the anchor (`▸.claude/memory`). Outside the anchor it is the absolute `~` path (`▸~/notes`). Absent when live dir == anchor. |
+
+```text
+L1  … | ⎇ main ✔ | myapp ▸.claude/memory | …
+L3  you@host:~/projects/myapp ▸.claude/memory | settings: … | output: …
+```
+
+Git branch / dirty state, the PR badge and the worktree row still follow the **live** directory (they describe where commands run); only the path display is anchored. The folder and host row are flex segments: the marker truncates first (`▸…/memory`), then the basename (never below 10 columns); a marker with no room is dropped.
+
+### Stable split of the host row
+
+In 3-line mode `user@host:path` stays on the settings row only while the terminal can hold host + anchor path + settings/output (reserved 80 columns) + a 12-column marker + the 6-column margin. Otherwise it takes its own row (full width) and `settings | output` moves to L4. The decision uses the **anchor** path and the terminal width, never the marker, so the row count does not change as you `cd`. At 225 columns it stays 3 rows. `STATUSLINE_LINES=1`/`2` never split.
 
 ### L4: Host Row (3-line mode, only when L3 is worktree)
 
 | Element | Example | Toggle |
 |---------|---------|--------|
-| User@host:cwd | `phorvicheka@DESKTOP-NVB94AN` | Same element as above; the cwd part is dropped here because the worktree row already prints it | `SHOW_CWD_PATH` |
+| User@host ▸marker | `phorvicheka@DESKTOP-NVB94AN ▸src/routes` | Same element as above; the path is dropped here because the worktree row already prints it, the marker (when drifted) stays | `SHOW_CWD_PATH` |
 | Settings group | `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
 | Output group | `output: ⚙️  default ~ ◕  caveman` | `SHOW_OUTPUT_STYLE` / `SHOW_CAVEMAN` |
 

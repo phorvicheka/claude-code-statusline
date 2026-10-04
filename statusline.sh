@@ -309,9 +309,21 @@ _detect_worktree() {
     [[ "$git_dir" == "$common_dir" ]] && return  # not a linked worktree
 
     # This IS a linked worktree — populate name, path, branch.
+    # Path: the worktree ROOT, even when $dir is a subdirectory of it. --show-prefix
+    # (dir relative to the root) is subtracted from $dir, so a symlinked $dir keeps
+    # its spelling; --show-toplevel is git's resolved spelling (used for porcelain matches).
+    local info prefix top root="${dir%/}"
+    info=$(git -C "$dir" rev-parse --show-prefix --show-toplevel 2>/dev/null) || info=""
+    if [[ "$info" == *$'\n'* ]]; then
+        prefix="${info%%$'\n'*}"; prefix="${prefix%/}"
+        top="${info#*$'\n'}"
+        [[ -n "$prefix" && "$root" == *"/$prefix" ]] && root="${root%"/$prefix"}"
+    else
+        top="$root"
+    fi
     # Name: prefer the real worktree name from workspace.git_worktree.
-    [[ -z "$WORKTREE_NAME" ]] && WORKTREE_NAME="${GIT_WORKTREE_JSON:-${dir##*/}}"
-    WORKTREE_PATH="$dir"
+    [[ -z "$WORKTREE_NAME" ]] && WORKTREE_NAME="${GIT_WORKTREE_JSON:-${root##*/}}"
+    WORKTREE_PATH="$root"
 
     # Find branch: check if any worktree at this path has a branch
     local wt_path="" wt_branch=""
@@ -320,7 +332,7 @@ _detect_worktree() {
             "worktree "*)  wt_path="${line#worktree }" ;;
             "branch "*)    wt_branch="${line#branch refs/heads/}" ;;
             "")
-                if [[ "$wt_path" == "$dir" && -n "$wt_branch" ]]; then
+                if [[ ( "$wt_path" == "$root" || "$wt_path" == "$top" ) && -n "$wt_branch" ]]; then
                     WORKTREE_BRANCH="$wt_branch"
                     return
                 fi
@@ -341,7 +353,7 @@ _detect_worktree() {
                 "HEAD "*)      wt_head="${line#HEAD }" ;;
                 "branch "*)    wt_branch="${line#branch refs/heads/}" ;;
                 "")
-                    if [[ "$wt_path" != "$dir" && "$wt_head" == "$my_head" && -n "$wt_branch" ]]; then
+                    if [[ "$wt_path" != "$root" && "$wt_path" != "$top" && "$wt_head" == "$my_head" && -n "$wt_branch" ]]; then
                         WORKTREE_BRANCH="$wt_branch"
                         return
                     fi
@@ -856,40 +868,102 @@ _tx_last() {
 }
 
 # ===========================================================================
+# Where am I? Anchor + drift marker
+# Claude Code's cwd follows the shell (a `cd` inside the session moves it), while
+# project_dir is where the session was launched. Showing only the live dir made the
+# project vanish behind e.g. ".../.claude/memory". So the display is anchored:
+#   ANCHOR_DIR  worktree root when the live dir is inside the worktree, else the
+#               project dir (falls back to the live dir on payloads without one)
+#   CWD_MARK    live dir relative to the anchor ("" when there is no drift; the
+#               absolute ~ path when the live dir left the anchor)
+# Git branch / PR / worktree keep following the LIVE dir (they describe where
+# commands run), only the path display is anchored.
+# ===========================================================================
+_trim_slash() { _TS="$1"; [[ "$_TS" != "/" ]] && _TS="${_TS%/}"; return 0; }   # result in _TS
+_tilde() {                                                                       # result in _TD
+    _TD="$1"
+    if [[ "$_TD" == "$HOME" ]]; then _TD="~"
+    elif [[ "$_TD" == "$HOME"/* ]]; then _TD="~${_TD#"$HOME"}"; fi
+}
+
+_trim_slash "${WORKSPACE_DIR:-${CWD:-$PWD}}"; LIVE_DIR="$_TS"
+_trim_slash "$WORKTREE_PATH";                  _WT_NORM="$_TS"
+_trim_slash "$PROJECT_DIR";                    _PROJ_NORM="$_TS"
+ANCHOR_DIR="$LIVE_DIR"
+if [[ -n "$_WT_NORM" && ( "$LIVE_DIR" == "$_WT_NORM" || "$LIVE_DIR" == "$_WT_NORM"/* ) ]]; then
+    ANCHOR_DIR="$_WT_NORM"
+elif [[ -n "$_PROJ_NORM" && -n "$LIVE_DIR" ]]; then
+    ANCHOR_DIR="$_PROJ_NORM"
+fi
+CWD_MARK=""
+if [[ -n "$ANCHOR_DIR" && "$LIVE_DIR" != "$ANCHOR_DIR" ]]; then
+    if [[ "$LIVE_DIR" == "$ANCHOR_DIR"/* ]]; then
+        CWD_MARK="${LIVE_DIR#"$ANCHOR_DIR"/}"
+    else
+        _tilde "$LIVE_DIR"; CWD_MARK="$_TD"
+    fi
+fi
+_tilde "$ANCHOR_DIR"; ANCHOR_DISP="$_TD"
+
+_UH_U="${USER:-}";            [[ -z "$_UH_U" ]] && _UH_U=$(id -un 2>/dev/null)
+_UH_H="${HOSTNAME%%.*}";      [[ -z "$_UH_H" ]] && _UH_H=$(hostname -s 2>/dev/null)
+
+# _cwd_marker <max-columns>: sets _MARK_TXT to CWD_MARK, left-truncated to fit
+# (cut at a "/" when possible: ".claude/memory" -> "…/memory"). Fails when there is
+# no marker or no room, so callers print nothing.
+_cwd_marker() {
+    local max="$1" t
+    _MARK_TXT=""
+    [[ -n "$CWD_MARK" ]] && (( max >= 1 )) || return 1
+    if (( ${#CWD_MARK} <= max )); then
+        _MARK_TXT="$CWD_MARK"
+    elif (( max == 1 )); then
+        _MARK_TXT="…"
+    else
+        t="${CWD_MARK: -$(( max - 1 ))}"
+        if [[ "${CWD_MARK: -$max:1}" != "/" && "$t" == */* ]]; then
+            t="/${t#*/}"; [[ "$t" == "/" ]] && t="${CWD_MARK: -$(( max - 1 ))}"
+        fi
+        # A 1-2 character stub ("…ry") says nothing: show a bare ellipsis instead.
+        (( ${#t} < 3 )) && t=""
+        _MARK_TXT="…${t}"
+    fi
+    return 0
+}
+
+if [[ "${STATUSLINE_DEBUG:-0}" == "1" ]]; then
+    printf 'LIVE_DIR=%s ANCHOR_DIR=%s CWD_MARK=%s PROJECT_DIR=%s WORKTREE_PATH=%s\n' \
+        "$LIVE_DIR" "$ANCHOR_DIR" "$CWD_MARK" "$PROJECT_DIR" "$WORKTREE_PATH" >> "${HOME}/.claude/statusline-debug.log"
+fi
+
+# ===========================================================================
 # Element renderers
 # ===========================================================================
 
-# user@host[:cwd]. The cwd part (PS1-style, SHOW_CWD_PATH) is a "flex" segment:
-# assemble_line sets _FLEX_BUDGET to the columns left on the row, and the path is
-# left-truncated (…/tail) to fit, or dropped when there is no room. It is also
-# dropped when the worktree row already prints the same path.
+# user@host[:anchor-path ▸marker]. The path part (PS1-style, SHOW_CWD_PATH) is a "flex"
+# segment: assemble_line sets _FLEX_BUDGET to the columns left on the row. The anchor
+# path (project / worktree root) is left-truncated (…/tail) to fit, or dropped when
+# there is no room; the ▸marker (live dir relative to the anchor) takes whatever is
+# left after it and truncates first. When the worktree row already prints the anchor
+# path only the marker follows user@host.
 render_user_host() {
-    local u="${USER:-}" h="${HOSTNAME%%.*}"
-    [[ -z "$u" ]] && u=$(id -un 2>/dev/null)
-    [[ -z "$h" ]] && h=$(hostname -s 2>/dev/null)
-    printf '\033[01;32m%s@%s\033[00m' "$u" "$h"
+    printf '\033[01;32m%s@%s\033[00m' "$_UH_U" "$_UH_H"
 
     $SHOW_CWD_PATH || return 0
-    local dir="${WORKSPACE_DIR:-${CWD:-$PWD}}"
-    [[ -z "$dir" ]] && return 0
-    local norm
-    norm=$(_to_fwd "$dir")
-    [[ "$norm" != "/" ]] && norm="${norm%/}"
-    if $_wt_row_shown && [[ "$norm" == "${WORKTREE_PATH%/}" ]]; then
-        return 0
+    [[ -z "$ANCHOR_DIR" ]] && return 0
+    # Columns after user@host; unknown budget (0) means "no room".
+    local room=$(( ${_FLEX_BUDGET:-0} - ${#_UH_U} - ${#_UH_H} - 1 )) rest
+    if $_wt_row_shown && [[ "$ANCHOR_DIR" == "$_WT_NORM" ]]; then
+        rest=$room
+    else
+        local avail=$(( room - 2 )) p="$ANCHOR_DISP"     # ":" + 1 spare
+        (( avail >= 8 )) || return 0
+        (( ${#p} > avail )) && p="…${p: -$(( avail - 1 ))}"
+        printf ':\033[01;34m%s\033[00m' "$p"
+        rest=$(( room - 1 - ${#p} ))
     fi
-    if [[ "$norm" == "$HOME" ]]; then
-        norm="~"
-    elif [[ "$norm" == "$HOME"/* ]]; then
-        norm="~${norm#"$HOME"}"
-    fi
-    # Room for ":" + path after user@host; unknown budget (0) means "no room".
-    local avail=$(( ${_FLEX_BUDGET:-0} - ${#u} - ${#h} - 2 ))
-    (( avail >= 8 )) || return 0
-    if (( ${#norm} > avail )); then
-        norm="…${norm: -$(( avail - 1 ))}"
-    fi
-    printf ':\033[01;34m%s\033[00m' "$norm"
+    _cwd_marker $(( rest - 2 )) || return 0              # " ▸" + text
+    printf ' %b▸%s%b' "$C_DIM" "$_MARK_TXT" "$C_RESET"
 }
 
 render_model() {
@@ -995,28 +1069,31 @@ render_git() {
     printf '%b' "$out"
 }
 
-# Folder: show basename, clickable link reveals full path
-# Handles Windows backslash paths (e.g. C:\Users\foo\project) by normalizing
-# separators before extracting the basename.
+# Folder: anchor (project / worktree root) basename, clickable link reveals the full
+# path; a dim ▸marker follows when the live dir has drifted from it (link -> live dir).
+# Flex segment: the marker truncates first, then the basename (never below 10 columns).
+# Paths are already forward-slashed (Windows backslashes normalised on input).
 render_folder() {
     $SHOW_FOLDER || return
-    local dir="${WORKSPACE_DIR:-${CWD:-$PWD}}"
-    [[ -z "$dir" ]] && return
-    # Normalize backslashes (use tr, not ${var//\\//} — fails on MINGW64 piped)
-    local norm
-    norm=$(_to_fwd "$dir")
-    # Strip trailing separator(s)
-    norm="${norm%/}"
-    local basename="${norm##*/}"
-    [[ -z "$basename" ]] && return
+    [[ -z "$ANCHOR_DIR" ]] && return
+    local base="${ANCHOR_DIR##*/}"
+    [[ -z "$base" ]] && return
+    local room="${_FLEX_BUDGET:-0}"
+    (( room > 0 )) || room=$_folder_max
+    (( room < 10 )) && room=10
     local display_name
-    display_name=$(truncate_str "$basename" "$_folder_max")
+    display_name=$(truncate_str "$base" "$room")
     # file:// URL — Windows drive paths need three slashes (file:///C:/...)
-    local file_url="file://${norm}"
-    [[ "$norm" =~ ^[A-Za-z]: ]] && file_url="file:///${norm}"
-    local folder_text
-    folder_text=$(make_link "$file_url" "${C_WHITE}${display_name}${C_RESET}")
-    printf '%b' "$folder_text"
+    local url="file://${ANCHOR_DIR}"
+    [[ "$ANCHOR_DIR" =~ ^[A-Za-z]: ]] && url="file:///${ANCHOR_DIR}"
+    local out
+    out=$(make_link "$url" "${C_WHITE}${display_name}${C_RESET}")
+    if _cwd_marker $(( room - ${#display_name} - 2 )); then   # " ▸" + text
+        local live_url="file://${LIVE_DIR}"
+        [[ "$LIVE_DIR" =~ ^[A-Za-z]: ]] && live_url="file:///${LIVE_DIR}"
+        out+=" $(make_link "$live_url" "${C_DIM}▸${_MARK_TXT}${C_RESET}")"
+    fi
+    printf '%b' "$out"
 }
 
 # Combined thinking + effort: 🧠  ◆ thinking ~ ◕ high
@@ -1418,7 +1495,15 @@ _vis_len() {
 # the columns left (TERM_WIDTH minus other segments, separators and a margin
 # for double-width glyphs). Without a budget (0) they print their full form.
 _FLEX_MARGIN=6
-_is_flex() { [[ "$1" == "render_user_host" || "$1" == "render_session_ids" ]]; }
+_is_flex() { [[ "$1" == "render_user_host" || "$1" == "render_session_ids" || "$1" == "render_folder" ]]; }
+
+# Columns reserved for "settings: …" + "output: …" when deciding whether user@host:path
+# fits on their row. A constant (not the rendered width) so the row count does not flicker
+# with effort / advisor changes; if it is a little off, the flex budget still prevents
+# overflow (the path truncates), it only shifts when the split happens.
+_STATE_RESERVE=80
+# ...and for a useful ▸marker ("▸…/memory") beside the path.
+_MARK_RESERVE=12
 
 assemble_line() {
     local renderers=("$@")
@@ -1495,7 +1580,20 @@ case "$STATUSLINE_LINES" in
             L3=(render_worktree)
             L4=(render_user_host render_settings_group render_output_group)
         else
-            L3=(render_user_host render_settings_group render_output_group)
+            # Stable split: user@host:anchor-path gets its own row when the one-row form
+            # (host + anchor path + settings + output) cannot fit. Decided from the ANCHOR
+            # path, never the ▸marker, so the row count does not change as you cd around.
+            _split_host_row=false
+            if $SHOW_CWD_PATH && [[ -n "$ANCHOR_DIR" ]]; then
+                _need=$(( ${#_UH_U} + ${#_UH_H} + 2 + ${#ANCHOR_DISP} + 3 + _STATE_RESERVE + _MARK_RESERVE + _FLEX_MARGIN ))
+                (( TERM_WIDTH < _need )) && _split_host_row=true
+            fi
+            if $_split_host_row; then
+                L3=(render_user_host)
+                L4=(render_settings_group render_output_group)
+            else
+                L3=(render_user_host render_settings_group render_output_group)
+            fi
         fi
         ;;
 esac

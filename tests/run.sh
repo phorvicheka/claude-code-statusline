@@ -67,7 +67,7 @@ render() {
     local json
     json=$(base_json | jq -c "$filter")
     LAST_ERR="$SANDBOX/stderr"
-    LAST_OUT=$(env "$@" HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" \
+    LAST_OUT=$(env "$@" HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" \
         TERM_WIDTH="${TERM_WIDTH_OVERRIDE:-160}" bash "$SCRIPT" <<<"$json" 2>"$LAST_ERR" | strip)
     $VERBOSE && printf '    ┌─\n%s\n    └─\n' "$(sed 's/^/    │ /' <<<"$LAST_OUT")"
 }
@@ -190,6 +190,90 @@ render ".cwd=\"$WT\" | .workspace.current_dir=\"$WT\" | .workspace.git_worktree=
 n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l)
 [[ "$n" == "1" ]] && ok "worktree path not duplicated by cwd on host row" || bad "worktree path not duplicated by cwd on host row" "path appears $n times"
 
+echo "── cwd drift: anchor + ▸marker, stable split ──"
+MEM="$REPO/.claude/memory"; mkdir -p "$MEM"
+at() { printf '.cwd="%s" | .workspace.current_dir="%s"' "$1" "$1"; }   # at <dir> → jq filter
+count() { grep -c -- "$1" <<<"$LAST_OUT" || true; }
+# widest rendered row among those containing $1 (UTF-8 aware; emoji margin covered by _FLEX_MARGIN)
+rowmax() { ( LC_ALL=C.utf8; m=0; while IFS= read -r l; do [[ "$l" == *"$1"* ]] && (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
+
+render "$(at "$MEM")"
+has   "drift: L1 shows project root + ▸subdir"           "main-repo ▸.claude/memory"
+[[ "$(count '▸.claude/memory')" == "2" ]] && ok "drift: marker on L1 and on the user@host row" || bad "drift: marker on L1 and on the user@host row" "rows with marker: $(count '▸.claude/memory')"
+has   "drift: user@host row shows project path, not the live dir" "$REPO ▸.claude/memory"
+hasnt "drift: live dir is not shown as the path"         "$MEM"
+nlines "drift: marker does not change the row count (3 at 160 cols)" 3
+has   "drift: git branch still follows the live dir"     "⎇ main"
+render '.'
+hasnt "no drift: no marker"                              "▸"
+render "$(at "$REPO")"
+hasnt "cwd == project dir: no marker"                    "▸"
+
+mkdir -p "$HOME/notes" "$SANDBOX/elsewhere"
+render "$(at "$HOME/notes")"
+has   "outside project (under HOME): ▸ + ~ path"         "▸~/notes"
+render "$(at "$SANDBOX/elsewhere")"
+has   "outside project: ▸ + absolute path"               "▸$SANDBOX/elsewhere"
+has   "outside project: L1 still shows the project name" "main-repo ▸"
+
+render "$(at "$MEM") | del(.workspace.project_dir)"
+hasnt "legacy payload (no project_dir): no marker"       "▸"
+has   "legacy payload: folder is the live basename"      "memory"
+render "$(at "$MEM") | del(.workspace)"
+hasnt "legacy payload (no workspace): no marker"         "▸"
+
+# Stable split: row count depends on width + anchor path, never on the marker.
+TERM_WIDTH_OVERRIDE=225 render "$(at "$MEM")"
+nlines "wide terminal: still 3 rows with a marker (225 cols)" 3
+TERM_WIDTH_OVERRIDE=225 render '.'
+nlines "wide terminal: 3 rows without a marker"           3
+TERM_WIDTH_OVERRIDE=120 render "$(at "$MEM")"; r1=$(nlines x 0 >/dev/null; printf '%s\n' "$LAST_OUT" | grep -c .)
+TERM_WIDTH_OVERRIDE=120 render '.';           r2=$(printf '%s\n' "$LAST_OUT" | grep -c .)
+[[ "$r1" == "$r2" ]] && ok "narrower terminal: marker does not change the row count ($r1 rows both)" || bad "narrower terminal: marker does not change the row count" "with=$r1 without=$r2"
+TERM_WIDTH_OVERRIDE=120 render "$(at "$MEM")"
+(( $(printf '%s\n' "$LAST_OUT" | grep -c .) == 4 )) && ok "narrower terminal: host row splits out (4 rows)" || bad "narrower terminal: host row splits out (4 rows)" "$(printf '%s\n' "$LAST_OUT" | grep -c .) rows"
+has   "split row carries the full anchor path + marker"   "$REPO ▸.claude/memory"
+hasnt "split row: path not truncated"                    "…"
+
+# Never wider than the terminal on the rows this feature touches.
+LONG="$REPO/$(printf 'deeply-nested-directory-%s/' 1 2 3 4 5 6)final"; mkdir -p "$LONG"
+for w in 120 140 160 225; do
+    TERM_WIDTH_OVERRIDE=$w render "$(at "$LONG")"
+    m=$(rowmax "▸")
+    (( m <= w )) && ok "long marker: rows with ▸ fit $w cols (max $m)" || bad "long marker: rows with ▸ fit $w cols" "max row = $m"
+done
+TERM_WIDTH_OVERRIDE=160 render "$(at "$LONG")"
+has   "long marker truncates, keeps the tail"            "▸…"
+has   "long marker: basename is never truncated first"   "main-repo ▸"
+
+# _cwd_marker truncation, exercised directly (function extracted from the script).
+eval "$(sed -n '/^_cwd_marker() {/,/^}/p' "$SCRIPT")"
+# shellcheck disable=SC2034  # CWD_MARK is read by the eval-extracted _cwd_marker
+mk() { CWD_MARK="$1"; if _cwd_marker "$2"; then printf '%s' "$_MARK_TXT"; else printf '<none>'; fi; }
+[[ "$(mk .claude/memory 14)" == ".claude/memory" ]] && ok "marker fits: shown whole"                        || bad "marker fits: shown whole" "$(mk .claude/memory 14)"
+[[ "$(mk .claude/memory 9)"  == "…/memory" ]]       && ok "marker truncation cuts at a slash (…/memory)"    || bad "marker truncation cuts at a slash" "$(mk .claude/memory 9)"
+[[ "$(mk .claude/memory 3)"  == "…" ]]              && ok "marker: no 1-2 character stub (bare … instead)"   || bad "marker: no stub" "$(mk .claude/memory 3)"
+[[ "$(mk memory 4)"          == "…ory" ]]           && ok "single long component keeps a readable tail"      || bad "single component tail" "$(mk memory 4)"
+[[ "$(mk .claude/memory 0)"  == "<none>" ]]         && ok "marker: no room -> nothing printed"               || bad "marker: no room" "$(mk .claude/memory 0)"
+[[ "$(mk '' 20)"             == "<none>" ]]         && ok "marker: empty marker -> nothing printed"          || bad "marker: empty" "$(mk '' 20)"
+
+# Worktrees: anchor = worktree root, even from a subdirectory of it.
+SUB="$WT/src/api"; mkdir -p "$SUB"
+render "$(at "$SUB") | .workspace.git_worktree=\"wt-feature\""
+has   "worktree subdir: wt row shows the worktree ROOT"  "path:$WT"
+hasnt "worktree subdir: wt row does not show the subdir" "path:$SUB"
+has   "worktree subdir: L1 = worktree dir + ▸subdir"     "wt-feature ▸src/api"
+n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l)
+[[ "$n" == "1" ]] && ok "worktree subdir: root path printed once (host row deduped)" || bad "worktree subdir: root path printed once" "appears $n times"
+# Captured real payload shape: launched in api-server, cwd inside its .worktrees/ dir.
+API="$SANDBOX/ghost/api-server"; GW="$API/.worktrees/feature-2026-04-27-rbac-permissions-authz"
+# 225 cols: the wt row caps its path at half the terminal width (pre-existing), and this path is long.
+TERM_WIDTH_OVERRIDE=225 render ".cwd=\"$GW\" | .workspace.current_dir=\"$GW\" | .workspace.project_dir=\"$API\" | .workspace.git_worktree=\"feature-2026-04-27-rbac-permissions-authz\""
+hasnt "real worktree payload: no marker (cwd is the worktree root)" "▸"
+[[ "$(head -1 <<<"$LAST_OUT")" == *"| feature-2026-04-27-rbac-permissions-authz" ]] && ok "real worktree payload: L1 shows the worktree dir" || bad "real worktree payload: L1 shows the worktree dir" "L1 = $(head -1 <<<"$LAST_OUT")"
+n=$(grep -o "$GW" <<<"$LAST_OUT" | wc -l)
+[[ "$n" == "1" ]] && ok "real worktree payload: path printed once" || bad "real worktree payload: path printed once" "appears $n times"
+
 echo "── width ──"
 TERM_WIDTH_OVERRIDE=60 render '.'
 nlines "narrow tier forces a single line" 1
@@ -198,8 +282,10 @@ nlines "full tier renders 3 lines (non-worktree)" 3
 # No visible line may exceed TERM_WIDTH (wide glyph margin allowed: emoji count 2 cols)
 maxw=$(awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
 (( maxw <= 160 )) && ok "no line wider than TERM_WIDTH=160 (max $maxw)" || bad "no line wider than TERM_WIDTH=160" "max line = $maxw"
-LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" bash "$SCRIPT" 2>/dev/null | strip)
-nlines "COLUMNS env is honoured when TERM_WIDTH unset (compact tier = 3 lines)" 3
+LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" bash "$SCRIPT" 2>/dev/null | strip)
+# At 100 columns user@host:path cannot share a row with settings/output: it splits onto
+# its own row (4 rows) instead of dropping the path. At the default width it would be 3.
+nlines "COLUMNS env is honoured when TERM_WIDTH unset (100 cols: host row splits, 4 rows)" 4
 
 echo "── cache hardening (planted files, symlinks, private root) ──"
 SEC="$SANDBOX/sec"; mkdir -p "$SEC"
