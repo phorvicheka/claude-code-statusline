@@ -201,6 +201,61 @@ maxw=$(awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_
 LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" bash "$SCRIPT" 2>/dev/null | strip)
 nlines "COLUMNS env is honoured when TERM_WIDTH unset (compact tier = 3 lines)" 3
 
+echo "── cache hardening (planted files, symlinks, private root) ──"
+SEC="$SANDBOX/sec"; mkdir -p "$SEC"
+sec_render() {  # sec_render <cache-dir> [ENV=val ...]: render with an explicit cache dir
+    local cdir="$1"; shift
+    LAST_ERR="$SANDBOX/stderr"
+    LAST_OUT=$(base_json | env "$@" HOME="$HOME" STATUSLINE_CACHE_DIR="$cdir" TERM_WIDTH=160 \
+        bash "$SCRIPT" 2>"$LAST_ERR" | strip)
+}
+none() { [[ ! -e "$2" ]] && ok "$1" || bad "$1" "$2 exists"; }
+
+# 1. Planted cache files carrying shell syntax must never execute.
+C1="$SEC/c1"; mkdir -p "$C1"; chmod 700 "$C1"
+sec_render "$C1"                                   # warm: creates settings2-*, git2-*
+EV="\$(touch $SEC/pwn-settings)"
+for f in "$C1"/settings2-*; do
+    printf 'SETTINGS_EFFORT_LEVEL=%s\nSETTINGS_ADVISOR_MODEL=a[%s]\nBOGUS=%s\n' "$EV" "$EV" "$EV" > "$f"
+done
+sec_render "$C1"
+none "planted settings cache is not executed" "$SEC/pwn-settings"
+for f in "$C1"/git2-*; do printf 'main\t0\ta[$(touch %s/pwn-git)]\tb[$(touch %s/pwn-git)]\t\n' "$SEC" "$SEC" > "$f"; done
+sec_render "$C1"
+none "planted git cache numbers are not evaluated" "$SEC/pwn-git"
+has  "still renders with a hostile git cache" "main-repo"
+printf '%s\t%s' 'x[$(touch '"$SEC"'/pwn-tx)]' '$(touch '"$SEC"'/pwn-tx)' > "$C1/tx-advisor-nosession"
+sec_render "$C1" 
+none "planted transcript cache is not evaluated" "$SEC/pwn-tx"
+LAST_OUT=$(base_json | env -u TERM_WIDTH -u COLUMNS HOME="$HOME" STATUSLINE_CACHE_DIR="$C1" SEC="$SEC" C1="$C1" SCRIPT="$SCRIPT" \
+    bash -c 'printf "%s" "x[\$(touch $SEC/pwn-width)]" > "$C1/width-$$"; bash "$SCRIPT"; true' 2>/dev/null | strip)
+none "planted width cache is not evaluated" "$SEC/pwn-width"
+[[ -n "$LAST_OUT" ]] && ok "still renders with a hostile width cache" || bad "still renders with a hostile width cache" "empty output"
+
+# 2. A symlink planted at a cache path must not be followed by our writes.
+C2="$SEC/c2"; mkdir -p "$C2"; chmod 700 "$C2"
+VICTIM="$SEC/victim"; printf 'precious' > "$VICTIM"
+sec_render "$C2"
+for f in "$C2"/settings2-* "$C2"/git2-*; do rm -f "$f"; ln -s "$VICTIM" "$f"; done
+sec_render "$C2"
+[[ "$(cat "$VICTIM")" == "precious" ]] && ok "symlink at cache path: target untouched" || bad "symlink at cache path: target untouched" "victim = $(cat "$VICTIM")"
+n=0; for f in "$C2"/settings2-* "$C2"/git2-*; do [[ -L "$f" ]] && n=$((n+1)); done
+(( n == 0 )) && ok "symlinks at cache paths are replaced by regular files" || bad "symlinks at cache paths are replaced by regular files" "$n symlinks left"
+has  "renders normally after symlink replaced" "◉ xhigh"
+
+# 3. A symlinked cache root is refused: output still correct, nothing written through it.
+REAL="$SEC/real-root"; mkdir -p "$REAL"; ln -s "$REAL" "$SEC/link-root"
+sec_render "$SEC/link-root"
+has  "symlinked cache root: still renders" "◉ xhigh"
+[[ -z "$(ls -A "$REAL")" ]] && ok "symlinked cache root: nothing written through it" || bad "symlinked cache root: nothing written through it" "$(ls "$REAL")"
+
+# 4. Default location: $XDG_RUNTIME_DIR/claude-statusline, created 0700.
+XR="$SEC/xdg"; mkdir -p "$XR"; chmod 700 "$XR"
+LAST_OUT=$(base_json | env -u STATUSLINE_CACHE_DIR XDG_RUNTIME_DIR="$XR" HOME="$HOME" TERM_WIDTH=160 bash "$SCRIPT" 2>/dev/null | strip)
+mode=$(stat -c %a "$XR/claude-statusline" 2>/dev/null || echo none)
+[[ "$mode" == "700" ]] && ok "default cache dir is created 0700 under XDG_RUNTIME_DIR" || bad "default cache dir is created 0700 under XDG_RUNTIME_DIR" "mode=$mode"
+[[ -n "$(ls -A "$XR/claude-statusline" 2>/dev/null)" ]] && ok "default cache dir is actually used" || bad "default cache dir is actually used" "empty"
+
 echo
 printf 'passed: %d  failed: %d\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

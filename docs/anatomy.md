@@ -142,7 +142,7 @@ Which levels exist depends on the model (Opus/Sonnet 4.6 have no `xhigh`; Haiku 
 
 ## Advisor
 
-`advisor:<model>` comes from the transcript's most recent `/advisor` output (session-only changes), falling back to `advisorModel` in settings. The transcript scan is incremental and cached per session (`/tmp/claude-statusline/tx-advisor-<session>`): only bytes appended since the last render are scanned, so very large transcripts (100MB+) cost nothing extra.
+`advisor:<model>` comes from the transcript's most recent `/advisor` output (session-only changes), falling back to `advisorModel` in settings. The transcript scan is incremental and cached per session (`<cache dir>/tx-advisor-<session>`): only bytes appended since the last render are scanned, so very large transcripts (100MB+) cost nothing extra.
 
 ## Output Style & Caveman
 

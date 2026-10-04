@@ -45,7 +45,7 @@ Cache invalidation behaviour:
 - Output style and `advisorModel` setting changes take up to 2 min to reflect. Lower `SETTINGS_CACHE_TTL` if that bothers you (cost ~10–20ms per render). `/effort` and thinking are live from Claude Code's JSON; session-only `/advisor` changes are read incrementally from the transcript.
 - Terminal resizes take up to 5 min to re-detect width. Lower `WIDTH_CACHE_TTL` if you resize often, or set `TERM_WIDTH=<cols>` in your `settings.json` `statusLine.command` to skip detection entirely.
 
-Reset cache to force fresh values: `rm -rf /tmp/claude-statusline/`
+Reset cache to force fresh values: `rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"`
 
 ### Verify
 
@@ -54,7 +54,7 @@ cat > /tmp/sl-test.json <<EOF
 {"session_id":"test","transcript_path":"","cwd":"$(pwd)","model":{"id":"claude-opus-4-7","display_name":"Opus 4.7"},"workspace":{"current_dir":"$(pwd)","project_dir":"$(pwd)"},"version":"2.1.119","output_style":{"name":"default"},"cost":{"total_cost_usd":0,"total_duration_ms":0,"total_lines_added":0,"total_lines_removed":0}}
 EOF
 
-rm -rf /tmp/claude-statusline
+rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"
 time bash ~/.claude/statusline.sh < /tmp/sl-test.json > /dev/null   # cold
 time bash ~/.claude/statusline.sh < /tmp/sl-test.json > /dev/null   # warm
 time bash ~/.claude/statusline.sh < /tmp/sl-test.json > /dev/null   # warm

@@ -22,10 +22,10 @@ The remaining ~250ms warm cost on WSL2 is dominated by **subshell forks in `asse
 
 ## Cache layout
 
-All caches live under `/tmp/claude-statusline/` and are short-lived. Delete the directory to force a refresh on next render.
+All caches live in one private per-user directory and are short-lived. Delete it to force a refresh on next render. The directory is `$XDG_RUNTIME_DIR/claude-statusline/` (typically `/run/user/<uid>`), else `/tmp/claude-statusline-$UID/`, created mode 0700. If it is a symlink or owned by someone else, the statusline refuses it and runs uncached (slower, still correct). Cache files are plain data: they are parsed through a whitelist and never `source`d or evaluated, and writes are atomic and never follow a symlink.
 
 ```text
-/tmp/claude-statusline/
+<cache dir>/
 ├── git2-<hash>              # branch, dirty, ahead/behind, remote (TTL 30s, 300s on /mnt/*)
 ├── settings2-<cwd+model>    # alwaysThinkingEnabled, effortLevel(+per-model), outputStyle, advisorModel (TTL 120s)
 ├── tx-advisor-<session>     # "<bytes scanned>\t<last /advisor value>": incremental transcript scan
@@ -93,7 +93,7 @@ cat > /tmp/sl-test.json <<EOF
 EOF
 
 # Cold
-rm -rf /tmp/claude-statusline
+rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"
 time bash ~/.claude/statusline.sh < /tmp/sl-test.json > /dev/null
 
 # Warm
@@ -135,7 +135,7 @@ SETTINGS_CACHE_TTL=120  # raise/lower trade-off for output-style / advisor setti
 WIDTH_CACHE_TTL=300     # fallback width probe only
 ```
 
-Reset all caches: `rm -rf /tmp/claude-statusline`
+Reset all caches: `rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"`
 
 ## Why this matters: TUI redraw stacking
 

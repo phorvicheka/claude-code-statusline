@@ -8,7 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
 TARGET="${CLAUDE_DIR}/statusline.sh"
 SETTINGS="${CLAUDE_DIR}/settings.json"
-CACHE_DIR="/tmp/claude-statusline"
+# Same location rule as statusline.sh (_init_cache_root): a per-user 0700 dir.
+if [[ -n "${XDG_RUNTIME_DIR:-}" && ! -L "$XDG_RUNTIME_DIR" && -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]]; then
+    CACHE_DIR="${XDG_RUNTIME_DIR}/claude-statusline"
+else
+    CACHE_DIR="/tmp/claude-statusline-${UID}"
+fi
+LEGACY_CACHE_DIR="/tmp/claude-statusline"   # shared world-writable path used by older versions
 # Re-run the statusline every N seconds while Claude Code is idle (0 = don't set).
 # Keeps reset countdowns, prompt-cache TTL and git state current; it does NOT make
 # rate-limit percentages fresher (see docs/rate-limit-staleness.md).
@@ -188,11 +194,21 @@ if [[ "$REFRESH_INTERVAL" =~ ^[0-9]+$ ]] && (( REFRESH_INTERVAL > 0 )) && [[ -f 
 fi
 
 # ------------------------------------------------------------------
-# 7. Create cache directory (and drop cache files from older script versions)
+# 7. Create the private cache directory (and drop the legacy shared one)
 # ------------------------------------------------------------------
-mkdir -p "$CACHE_DIR"
-rm -f "$CACHE_DIR"/git-* "$CACHE_DIR"/settings-* 2>/dev/null || true
-ok "Cache directory ready: ${CACHE_DIR}"
+if [[ ! -e "$CACHE_DIR" && ! -L "$CACHE_DIR" ]]; then
+    ( umask 077; mkdir -p -- "$CACHE_DIR" )
+fi
+if [[ ! -L "$CACHE_DIR" && -d "$CACHE_DIR" && -O "$CACHE_DIR" ]]; then
+    ok "Cache directory ready: ${CACHE_DIR}"
+else
+    warn "Cache directory ${CACHE_DIR} is not a private directory owned by you; the statusline will run uncached."
+fi
+# Older versions cached in a shared /tmp path that other local users could write to. Remove it,
+# but only if it is ours and not a symlink (never follow or delete someone else's directory).
+if [[ -d "$LEGACY_CACHE_DIR" && ! -L "$LEGACY_CACHE_DIR" && -O "$LEGACY_CACHE_DIR" ]]; then
+    rm -rf -- "$LEGACY_CACHE_DIR" && ok "Removed legacy cache directory: ${LEGACY_CACHE_DIR}"
+fi
 
 # ------------------------------------------------------------------
 # Done

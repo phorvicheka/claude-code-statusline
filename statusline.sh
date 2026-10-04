@@ -92,8 +92,65 @@ C_RESET='\033[0m'
 SEP=" ${C_DIM}|${C_RESET} "
 TILDE=" ${C_DIM}~${C_RESET} "
 
-# Cache root (override for tests: STATUSLINE_CACHE_DIR=/tmp/x)
-CACHE_ROOT="${STATUSLINE_CACHE_DIR:-/tmp/claude-statusline}"
+# ===========================================================================
+# Cache root
+# A predictable world-writable /tmp path would let any local user plant cache
+# files that get read back into this script, or symlinks that our writes would
+# follow. So: $XDG_RUNTIME_DIR/claude-statusline (per-user, 0700) when available,
+# else /tmp/claude-statusline-$UID created 0700. Symlinks and directories owned
+# by someone else are refused; on any doubt CACHE_ROOT is "" and every cache is
+# skipped (slower, still correct). Override for tests: STATUSLINE_CACHE_DIR=/x
+# (same ownership / symlink checks, mode not enforced).
+# ===========================================================================
+_init_cache_root() {
+    local base="${STATUSLINE_CACHE_DIR:-}"
+    if [[ -z "$base" ]]; then
+        if [[ -n "${XDG_RUNTIME_DIR:-}" && ! -L "$XDG_RUNTIME_DIR" && -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]]; then
+            base="${XDG_RUNTIME_DIR}/claude-statusline"
+        else
+            base="/tmp/claude-statusline-${UID}"
+        fi
+    fi
+    if [[ ! -e "$base" && ! -L "$base" ]]; then
+        ( umask 077; mkdir -p -- "$base" ) 2>/dev/null
+    fi
+    # Symlink test FIRST: -d and -O both follow links.
+    if [[ ! -L "$base" && -d "$base" && -O "$base" ]]; then
+        CACHE_ROOT="$base"
+    else
+        CACHE_ROOT=""
+    fi
+}
+CACHE_ROOT=""
+_init_cache_root
+
+# _cache_write <file> <content>: atomic and symlink-safe. Writes a private temp
+# file (noclobber) next to the target, then renames over it; rename replaces a
+# planted symlink instead of following it.
+_cache_write() {
+    local f="$1"
+    [[ -n "$CACHE_ROOT" && "$f" == "$CACHE_ROOT"/* ]] || return 0
+    [[ -d "$f" ]] && return 0
+    local tmp="${f}.$$"
+    rm -f -- "$tmp" 2>/dev/null
+    if ( set -C; umask 077; printf '%s' "$2" > "$tmp" ) 2>/dev/null; then
+        [[ -L "$f" ]] && rm -f -- "$f" 2>/dev/null
+        mv -f -- "$tmp" "$f" 2>/dev/null || rm -f -- "$tmp" 2>/dev/null
+    else
+        rm -f -- "$tmp" 2>/dev/null
+    fi
+    return 0
+}
+
+# Age in seconds of a cache file (999999 when missing / a symlink / unreadable).
+_cache_age() {
+    local f="$1" mtime now
+    [[ -f "$f" && ! -L "$f" ]] || { printf '999999'; return; }
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+    printf -v now '%(%s)T' -1 2>/dev/null || now=$(date +%s)
+    [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+    printf '%s' $(( now - mtime ))
+}
 
 # ===========================================================================
 # Read JSON from stdin
@@ -320,7 +377,6 @@ fi
 #   $CWD/.claude/settings.json
 #   $HOME/.claude/settings.json
 # ===========================================================================
-SETTINGS_CACHE_DIR="$CACHE_ROOT"
 SETTINGS_THINKING=""
 SETTINGS_EFFORT_LEVEL=""
 SETTINGS_EFFORT_MODEL=""   # modelSettings.<model-id>.effortLevel (beats top-level effortLevel)
@@ -328,62 +384,69 @@ SETTINGS_EFFORT_ENV=""
 SETTINGS_OUTPUT_STYLE=""
 SETTINGS_ADVISOR_MODEL=""
 
+# The cache file is plain KEY=value lines and is read back through a whitelist:
+# it is never `source`d / eval'd, and values lose control characters.
+_read_settings_cache() {
+    local k v
+    # `|| [[ -n $k ]]`: the last line has no trailing newline ($(...) strips it).
+    while IFS='=' read -r k v || [[ -n "$k" ]]; do
+        case "$k" in
+            SETTINGS_THINKING|SETTINGS_EFFORT_LEVEL|SETTINGS_EFFORT_MODEL|SETTINGS_EFFORT_ENV|SETTINGS_OUTPUT_STYLE|SETTINGS_ADVISOR_MODEL)
+                printf -v "$k" '%s' "${v//[[:cntrl:]]/}" ;;
+        esac
+    done < "$1" 2>/dev/null
+}
+
 _load_settings() {
-    mkdir -p "$SETTINGS_CACHE_DIR" 2>/dev/null
     # Key by cwd + model: the per-model effort lookup depends on the model id.
     # "settings2-" prefix: older "settings-*" files lack SETTINGS_EFFORT_MODEL.
     local model_key="${MODEL_ID%%\[*}"   # claude-sonnet-5-5[1m] -> claude-sonnet-5-5 (assumed to match CC's key)
-    local cwd_hash
-    cwd_hash=$(printf '%s|%s' "${CWD:-_}" "$model_key" | cksum | awk '{print $1}')
-    local cache_file="${SETTINGS_CACHE_DIR}/settings2-${cwd_hash}"
-
-    local needs_refresh=true
-    if [[ -f "$cache_file" ]]; then
-        local mtime now age
-        mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
-        now=$(date +%s)
-        age=$(( now - mtime ))
-        (( age < SETTINGS_CACHE_TTL )) && needs_refresh=false
+    local cache_file=""
+    if [[ -n "$CACHE_ROOT" ]]; then
+        local cwd_hash
+        cwd_hash=$(printf '%s|%s' "${CWD:-_}" "$model_key" | cksum | awk '{print $1}')
+        cache_file="${CACHE_ROOT}/settings2-${cwd_hash}"
+        if (( $(_cache_age "$cache_file") < SETTINGS_CACHE_TTL )); then
+            _read_settings_cache "$cache_file"
+            return 0
+        fi
     fi
 
-    if $needs_refresh; then
-        local thinking="" effort_level="" effort_model="" effort_env="" output_style="" advisor_model=""
-        local f parsed k v
-        for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
-                  "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
-            [[ -f "$f" ]] || continue
-            # Single jq pass per file: extract all 6 keys at once
-            parsed=$(jq -r --arg m "$model_key" '
-                "T=" + (if has("alwaysThinkingEnabled") then (.alwaysThinkingEnabled | tostring) else "" end),
-                "E=" + (if has("effortLevel") then .effortLevel else "" end),
-                "EM=" + (try ((.modelSettings // {})[$m].effortLevel // "") catch ""),
-                "EV=" + (.env.CLAUDE_CODE_EFFORT_LEVEL // ""),
-                "O=" + (if has("outputStyle") then .outputStyle else "" end),
-                "A=" + (if has("advisorModel") then .advisorModel else "" end)
-            ' "$f" 2>/dev/null) || continue
-            while IFS='=' read -r k v; do
-                case "$k" in
-                    T)  [[ -z "$thinking"      && -n "$v" ]] && thinking="$v" ;;
-                    E)  [[ -z "$effort_level"  && -n "$v" ]] && effort_level="$v" ;;
-                    EM) [[ -z "$effort_model"  && -n "$v" ]] && effort_model="$v" ;;
-                    EV) [[ -z "$effort_env"    && -n "$v" ]] && effort_env="$v" ;;
-                    O)  [[ -z "$output_style"  && -n "$v" ]] && output_style="$v" ;;
-                    A)  [[ -z "$advisor_model" && -n "$v" ]] && advisor_model="$v" ;;
-                esac
-            done <<< "$parsed"
-        done
-        {
-            printf 'SETTINGS_THINKING=%q\n'      "$thinking"
-            printf 'SETTINGS_EFFORT_LEVEL=%q\n'  "$effort_level"
-            printf 'SETTINGS_EFFORT_MODEL=%q\n'  "$effort_model"
-            printf 'SETTINGS_EFFORT_ENV=%q\n'    "$effort_env"
-            printf 'SETTINGS_OUTPUT_STYLE=%q\n'  "$output_style"
-            printf 'SETTINGS_ADVISOR_MODEL=%q\n' "$advisor_model"
-        } > "$cache_file" 2>/dev/null
-    fi
+    local thinking="" effort_level="" effort_model="" effort_env="" output_style="" advisor_model=""
+    local f parsed k v
+    for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
+              "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
+        [[ -f "$f" ]] || continue
+        # Single jq pass per file: extract all 6 keys at once
+        parsed=$(jq -r --arg m "$model_key" '
+            "T=" + (if has("alwaysThinkingEnabled") then (.alwaysThinkingEnabled | tostring) else "" end),
+            "E=" + (if has("effortLevel") then .effortLevel else "" end),
+            "EM=" + (try ((.modelSettings // {})[$m].effortLevel // "") catch ""),
+            "EV=" + (.env.CLAUDE_CODE_EFFORT_LEVEL // ""),
+            "O=" + (if has("outputStyle") then .outputStyle else "" end),
+            "A=" + (if has("advisorModel") then .advisorModel else "" end)
+        ' "$f" 2>/dev/null) || continue
+        while IFS='=' read -r k v; do
+            v="${v//[[:cntrl:]]/}"
+            case "$k" in
+                T)  [[ -z "$thinking"      && -n "$v" ]] && thinking="$v" ;;
+                E)  [[ -z "$effort_level"  && -n "$v" ]] && effort_level="$v" ;;
+                EM) [[ -z "$effort_model"  && -n "$v" ]] && effort_model="$v" ;;
+                EV) [[ -z "$effort_env"    && -n "$v" ]] && effort_env="$v" ;;
+                O)  [[ -z "$output_style"  && -n "$v" ]] && output_style="$v" ;;
+                A)  [[ -z "$advisor_model" && -n "$v" ]] && advisor_model="$v" ;;
+            esac
+        done <<< "$parsed"
+    done
+    SETTINGS_THINKING="$thinking"; SETTINGS_EFFORT_LEVEL="$effort_level"
+    SETTINGS_EFFORT_MODEL="$effort_model"; SETTINGS_EFFORT_ENV="$effort_env"
+    SETTINGS_OUTPUT_STYLE="$output_style"; SETTINGS_ADVISOR_MODEL="$advisor_model"
 
-    # shellcheck disable=SC1090
-    [[ -f "$cache_file" ]] && source "$cache_file" 2>/dev/null
+    [[ -n "$cache_file" ]] && _cache_write "$cache_file" "$(
+        printf 'SETTINGS_THINKING=%s\nSETTINGS_EFFORT_LEVEL=%s\nSETTINGS_EFFORT_MODEL=%s\n' "$thinking" "$effort_level" "$effort_model"
+        printf 'SETTINGS_EFFORT_ENV=%s\nSETTINGS_OUTPUT_STYLE=%s\nSETTINGS_ADVISOR_MODEL=%s\n' "$effort_env" "$output_style" "$advisor_model"
+    )"
+    return 0
 }
 _load_settings
 
@@ -407,14 +470,14 @@ _width_cache_key() {
 _get_cached_width() {
     local key
     key=$(_width_cache_key) || return 1
-    local cache_file="${SETTINGS_CACHE_DIR}/width-${key}"
-    [[ -f "$cache_file" ]] || return 1
-    local mtime now age
-    mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
-    now=$(date +%s)
-    age=$(( now - mtime ))
-    (( age < WIDTH_CACHE_TTL )) || return 1
-    cat "$cache_file" 2>/dev/null
+    [[ -n "$CACHE_ROOT" ]] || return 1
+    local cache_file="${CACHE_ROOT}/width-${key}"
+    (( $(_cache_age "$cache_file") < WIDTH_CACHE_TTL )) || return 1
+    local w=""
+    IFS= read -r w < "$cache_file" 2>/dev/null
+    # Used in arithmetic later: digits only.
+    [[ "$w" =~ ^[0-9]{1,5}$ ]] || return 1
+    printf '%s' "$w"
 }
 
 _save_cached_width() {
@@ -422,8 +485,7 @@ _save_cached_width() {
     [[ "${width:-0}" -gt 0 ]] 2>/dev/null || return
     local key
     key=$(_width_cache_key) || return
-    mkdir -p "$SETTINGS_CACHE_DIR" 2>/dev/null
-    printf '%s' "$width" > "${SETTINGS_CACHE_DIR}/width-${key}" 2>/dev/null
+    _cache_write "${CACHE_ROOT}/width-${key}" "$width"
 }
 
 # Claude Code sets COLUMNS/LINES to the real terminal size before running the
@@ -477,6 +539,9 @@ if [[ "${TERM_WIDTH:-0}" -le 0 ]] 2>/dev/null; then
         unset _cached_w
     fi
 fi
+
+# TERM_WIDTH feeds bash arithmetic: digits only, whatever its source.
+[[ "$TERM_WIDTH" =~ ^[0-9]{1,5}$ ]] || TERM_WIDTH=200
 
 # Width tier: full(>=140), wide(100-139), compact(76-99), narrow(<76)
 if   (( TERM_WIDTH >= 140 )); then TIER="full"
@@ -629,7 +694,6 @@ make_link() {
 # ===========================================================================
 # Git info with caching
 # ===========================================================================
-GIT_CACHE_DIR="$CACHE_ROOT"
 
 # git@host:owner/repo(.git) | ssh://git@host/owner/repo | https://... -> https://host/owner/repo
 _normalize_remote() {
@@ -660,24 +724,20 @@ get_git_info() {
     dir=$(_to_fwd "$dir")
     [[ -z "$dir" || ! -d "$dir" ]] && return
 
-    mkdir -p "$GIT_CACHE_DIR" 2>/dev/null
-
-    local dir_hash
-    dir_hash=$(printf '%s' "$dir" | cksum | awk '{print $1}')
-    # "git2-" prefix: the cache no longer stores PR fields (older git-* files had 8 columns).
-    local cache_file="${GIT_CACHE_DIR}/git2-${dir_hash}"
-
     # WSL2 /mnt/* (9p) hosts make git slow; use the longer TTL there only.
     local ttl=$GIT_CACHE_TTL
     [[ "$dir" == /mnt/* ]] && ttl=$GIT_CACHE_TTL_SLOW
 
-    local needs_refresh=true
-    if [[ -f "$cache_file" ]]; then
-        local mtime now age
-        mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
-        now=$(date +%s)
-        age=$(( now - mtime ))
-        (( age < ttl )) && needs_refresh=false
+    # "git2-" prefix: the cache no longer stores PR fields (older git-* files had 8 columns).
+    local cache_file="" result="" needs_refresh=true
+    if [[ -n "$CACHE_ROOT" ]]; then
+        local dir_hash
+        dir_hash=$(printf '%s' "$dir" | cksum | awk '{print $1}')
+        cache_file="${CACHE_ROOT}/git2-${dir_hash}"
+        if (( $(_cache_age "$cache_file") < ttl )); then
+            IFS= read -r result < "$cache_file" 2>/dev/null
+            [[ -n "$result" ]] && needs_refresh=false
+        fi
     fi
 
     if $needs_refresh; then
@@ -744,10 +804,11 @@ get_git_info() {
             remote_url=$(_normalize_remote "$(git -C "$dir" remote get-url origin 2>/dev/null)")
         fi
 
-        printf '%s\t%s\t%s\t%s\t%s' "$branch" "$dirty" "${ahead:-0}" "${behind:-0}" "$remote_url" > "$cache_file"
+        printf -v result '%s\t%s\t%s\t%s\t%s' "$branch" "$dirty" "${ahead:-0}" "${behind:-0}" "$remote_url"
+        [[ -n "$cache_file" ]] && _cache_write "$cache_file" "$result"
     fi
 
-    cat "$cache_file" 2>/dev/null
+    printf '%s' "$result"
 }
 
 # ===========================================================================
@@ -768,23 +829,29 @@ _tx_last() {
     [[ "$size" =~ ^[0-9]+$ ]] || return 0
 
     local sid="${SESSION_ID//[^A-Za-z0-9_-]/}"
-    local cf="${CACHE_ROOT}/tx-${tag}-${sid:-nosession}"
-    local cs="" cv=""
-    [[ -f "$cf" ]] && IFS=$'\t' read -r cs cv < "$cf"
+    local cf="" cs="" cv=""
+    if [[ -n "$CACHE_ROOT" ]]; then
+        cf="${CACHE_ROOT}/tx-${tag}-${sid:-nosession}"
+        if [[ -f "$cf" && ! -L "$cf" ]]; then
+            IFS=$'\t' read -r cs cv < "$cf" 2>/dev/null
+            # cv is displayed, cs is used in arithmetic: validate both.
+            [[ "$cs" =~ ^[0-9]{1,15}$ ]] || { cs=""; cv=""; }
+            [[ "$cv" =~ ^[A-Za-z0-9_.-]*$ ]] || cv=""
+        fi
+    fi
 
     local hit=""
     if [[ "$cs" =~ ^[0-9]+$ ]] && (( cs == size )); then
         printf '%s' "$cv"; return 0
     elif [[ "$cs" =~ ^[0-9]+$ ]] && (( cs < size )); then
         local start=$(( cs > 4096 ? cs - 4096 : 0 ))
-        hit=$(tail -c +$(( start + 1 )) "$f" 2>/dev/null | grep -a "$line_re" | tail -n 1 \
+        hit=$(tail -c +$(( start + 1 )) -- "$f" 2>/dev/null | grep -a "$line_re" | tail -n 1 \
               | grep -oP "$extract_re" | head -1 || true)
         [[ -z "$hit" ]] && hit="$cv"
     else
-        hit=$(tac "$f" 2>/dev/null | grep -a -m1 "$line_re" | grep -oP "$extract_re" | head -1 || true)
+        hit=$(tac -- "$f" 2>/dev/null | grep -a -m1 "$line_re" | grep -oP "$extract_re" | head -1 || true)
     fi
-    mkdir -p "$CACHE_ROOT" 2>/dev/null
-    printf '%s\t%s' "$size" "$hit" > "$cf" 2>/dev/null
+    [[ -n "$cf" ]] && _cache_write "$cf" "$(printf '%s\t%s' "$size" "$hit")"
     printf '%s' "$hit"
 }
 
@@ -873,6 +940,9 @@ render_git() {
     if [[ -n "$git_info" ]]; then
         IFS=$'\t' read -r g_branch g_dirty g_ahead g_behind g_remote <<< "$git_info"
     fi
+    # ahead/behind go through (( )): digits only, whatever the cache held.
+    [[ "$g_ahead"  =~ ^[0-9]{1,9}$ ]] || g_ahead=0
+    [[ "$g_behind" =~ ^[0-9]{1,9}$ ]] || g_behind=0
 
     # Worktree branch overrides
     [[ -n "$WORKTREE_BRANCH" ]] && g_branch="$WORKTREE_BRANCH"

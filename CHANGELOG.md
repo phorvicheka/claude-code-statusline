@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] - 2026-10-04
 
+### Security
+
+- **Cache poisoning / code execution via `/tmp`.** The settings cache lived in a predictable world-writable
+  path (`/tmp/claude-statusline`) and was loaded with `source`, so any local user who pre-created the directory
+  could plant a file that ran as you on the next render. Cached numbers (git ahead/behind, width, transcript byte
+  offset) also reached bash arithmetic, which evaluates `a[$(cmd)]`. Fixed at the root:
+  - cache lives in `$XDG_RUNTIME_DIR/claude-statusline` (per-user, 0700) or `/tmp/claude-statusline-$UID`
+    (created 0700); a symlink or a directory owned by someone else is refused and the statusline runs uncached;
+  - cache files are never `source`d: the settings cache is read through a key whitelist with control characters
+    stripped, and every cached value is validated (digits only / restricted charset) before use;
+  - writes go to a private temp file and are renamed into place, so a symlink planted at a cache path is
+    replaced instead of followed (no clobbering of files you own);
+  - `TERM_WIDTH` from any source must be digits or it falls back to 200.
+- `install.sh` / `uninstall.sh` use the same location and remove the old shared `/tmp/claude-statusline` only
+  when it is yours and not a symlink.
+
 ### Fixed
 
 - **Effort showed the wrong level (e.g. `high` while the session ran `xhigh`).** Claude Code sends `effort` and
@@ -34,9 +50,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Flex session name:** `s-name:` shrinks to the columns left on the row instead of wrapping it.
 - **`statusLine.refreshInterval`** (60s) set by `install.sh` when absent (`STATUSLINE_REFRESH_INTERVAL=0` skips
   it). Keeps reset countdowns, cache TTL and git state moving while idle. It does not refresh rate-limit percentages.
-- **`tests/run.sh`:** ~60 fixture cases (xhigh, max, Haiku, legacy payloads, null fields, hostile values,
-  transcript cache, PR states, badges, vim, worktree, widths) run in a sandboxed `HOME` and cache dir.
-- `STATUSLINE_CACHE_DIR` env var to relocate the cache (used by the tests).
+- **`tests/run.sh`:** ~70 fixture cases (xhigh, max, Haiku, legacy payloads, null fields, hostile values,
+  transcript cache, planted cache files and symlinks, PR states, badges, vim, worktree, widths) run in a sandboxed `HOME` and cache dir.
+- `STATUSLINE_CACHE_DIR` env var to relocate the cache (used by the tests; the same symlink / ownership checks apply).
 - Debug log now records which width source won (`env`, `COLUMNS` or `probe`).
 
 ### Changed

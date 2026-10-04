@@ -114,7 +114,7 @@ See [Statusline Anatomy](docs/anatomy.md) for display modes, element reference, 
 
 ## Performance
 
-Render time targets **< 200ms warm**. Caches git state (30s; 300s on WSL2 `/mnt/*`), the `settings.json` parse (120s), the transcript scan for `/advisor` (incremental), and a fallback `TERM_WIDTH` probe under `/tmp/claude-statusline/`. See [docs/performance.md](docs/performance.md) for benchmarks, diagnosis, and TUI redraw stacking explained.
+Render time targets **< 200ms warm**. Caches git state (30s; 300s on WSL2 `/mnt/*`), the `settings.json` parse (120s), the transcript scan for `/advisor` (incremental), and a fallback `TERM_WIDTH` probe in a private per-user cache dir (`$XDG_RUNTIME_DIR/claude-statusline/`, else `/tmp/claude-statusline-$UID/`, mode 0700). See [docs/performance.md](docs/performance.md) for benchmarks, diagnosis, and TUI redraw stacking explained.
 
 ## Known Limitations
 
@@ -132,10 +132,10 @@ See [Known Limitations](docs/known-limitations.md) for clickable link support an
 | Rate limits seem stale | Values update only after each assistant response. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
 | Branch link not clickable | Auto-disabled on unsupported terminals. Use Windows Terminal or `FORCE_HYPERLINK=1 claude`. |
-| Git info stale | Decrease `GIT_CACHE_TTL` (default 30s) or `rm -rf /tmp/claude-statusline/` |
+| Git info stale | Decrease `GIT_CACHE_TTL` (default 30s) or `rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"` |
 | Statusline + input box duplicated above output | TUI redraw stacking when render > ~300ms. See [docs/performance.md](docs/performance.md). The script targets < 200ms warm; if yours is slower, profile with `STATUSLINE_DEBUG=1` and bump TTLs. |
-| Output style / advisor setting slow to reflect | Settings preload is cached (`SETTINGS_CACHE_TTL`, default 120s). `rm -rf /tmp/claude-statusline/` to refresh. Effort and thinking are live: they come straight from Claude Code's JSON. |
-| Wrong width after terminal resize | Claude Code passes the live size in `$COLUMNS`, which is used first and never cached. Only the fallback probe (builds that don't set `COLUMNS`) is cached (`WIDTH_CACHE_TTL`); `rm -rf /tmp/claude-statusline/` to refresh. |
+| Output style / advisor setting slow to reflect | Settings preload is cached (`SETTINGS_CACHE_TTL`, default 120s). `rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"` to refresh. Effort and thinking are live: they come straight from Claude Code's JSON. |
+| Wrong width after terminal resize | Claude Code passes the live size in `$COLUMNS`, which is used first and never cached. Only the fallback probe (builds that don't set `COLUMNS`) is cached (`WIDTH_CACHE_TTL`); `rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"` to refresh. |
 | Branch name truncated | Width detection may fail on Git Bash (now uses `tput cols` with 120-col default). Update to latest, or override: `TERM_WIDTH=<cols>` in settings.json command. |
 | Width detection wrong | Override: `TERM_WIDTH=<cols>` in settings.json command. |
 | PR# not showing | Comes from Claude Code's `pr.*` JSON (shown only while an open PR/MR exists for the branch; GitLab MRs need Claude Code >= 2.1.234). The `gh` CLI is no longer used. |

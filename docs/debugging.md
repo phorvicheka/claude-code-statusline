@@ -31,4 +31,4 @@ STATUSLINE_CACHE_DIR=$(mktemp -d) TERM_WIDTH=160 bash statusline.sh < payload.js
 
 If the statusline + input box stack in scrollback during long runs, the script is taking longer than Claude Code's redraw interval (~300ms). See [performance.md](performance.md) for benchmarks, profiling commands, and tuning knobs.
 
-Quick reset: `rm -rf /tmp/claude-statusline` clears all caches (git, settings, width).
+Quick reset: `rm -rf "$XDG_RUNTIME_DIR/claude-statusline" "/tmp/claude-statusline-$(id -u)"` clears all caches (git, settings, width).

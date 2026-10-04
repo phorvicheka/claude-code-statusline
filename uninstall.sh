@@ -5,7 +5,12 @@ set -euo pipefail
 
 CLAUDE_DIR="${HOME}/.claude"
 TARGET="${CLAUDE_DIR}/statusline.sh"
-CACHE_DIR="/tmp/claude-statusline"
+if [[ -n "${XDG_RUNTIME_DIR:-}" && ! -L "$XDG_RUNTIME_DIR" && -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]]; then
+    CACHE_DIR="${XDG_RUNTIME_DIR}/claude-statusline"
+else
+    CACHE_DIR="/tmp/claude-statusline-${UID}"
+fi
+LEGACY_CACHE_DIR="/tmp/claude-statusline"
 
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -38,10 +43,13 @@ else
 fi
 
 # Clean cache
-if [[ -d "$CACHE_DIR" ]]; then
-    rm -rf "$CACHE_DIR"
-    ok "Removed cache directory: ${CACHE_DIR}"
-fi
+# Only remove directories that are ours; a symlink or someone else's directory is left alone.
+for d in "$CACHE_DIR" "$LEGACY_CACHE_DIR"; do
+    if [[ -d "$d" && ! -L "$d" && -O "$d" ]]; then
+        rm -rf -- "$d"
+        ok "Removed cache directory: ${d}"
+    fi
+done
 
 echo ""
 printf "${GREEN}Uninstall complete.${RESET}\n"
