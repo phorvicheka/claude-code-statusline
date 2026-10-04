@@ -11,6 +11,7 @@ Measured on WSL2 (Ubuntu, Linux 6.6, fork-heavy environment). Numbers will be lo
 | Phase | Before | After | Reduction |
 |-------|--------|-------|-----------|
 | Cold (no caches, `gh pr view` network) | ~2.15s | ~1.10s | **~49%** |
+| Cold, after dropping `gh pr view` (2026-10-04, native ext4) | ~1.13s | ~0.34s | **~70%** |
 | Warm (caches valid), best | ~410ms | ~140ms | **~65%** |
 | Warm, median (WSL2 with system load) | ~430ms | ~250ms | **~40%** |
 | Warm, p95 | ~600ms | ~340ms | **~43%** |
@@ -25,16 +26,19 @@ All caches live under `/tmp/claude-statusline/` and are short-lived. Delete the 
 
 ```text
 /tmp/claude-statusline/
-├── git-<hash>          # branch, dirty, ahead/behind, remote, PR data (TTL 60s)
-├── settings-<cwd-hash> # alwaysThinkingEnabled, effortLevel, outputStyle, advisorModel (TTL 30s)
-└── width-<parent-pid>  # cached TERM_WIDTH (TTL 30s)
+├── git2-<hash>              # branch, dirty, ahead/behind, remote (TTL 30s, 300s on /mnt/*)
+├── settings2-<cwd+model>    # alwaysThinkingEnabled, effortLevel(+per-model), outputStyle, advisorModel (TTL 120s)
+├── tx-advisor-<session>     # "<bytes scanned>\t<last /advisor value>": incremental transcript scan
+├── tx-effort-<session>      # same, legacy (pre-`effort` JSON) payloads only
+└── width-<parent-pid>       # fallback TERM_WIDTH probe only (TTL 300s); $COLUMNS is never cached
 ```
 
 | Cache | TTL | Why | Tunable |
 |-------|-----|-----|---------|
-| Git + PR | 60s | `gh pr view` is a network call (~1.5s cold). Branch / dirty rarely change in <1 min. | `GIT_CACHE_TTL` in statusline.sh |
-| Settings | 30s | Avoids 6+ scattered `jq` calls across `settings.local.json` + `settings.json` (HOME and CWD). | `SETTINGS_CACHE_TTL` |
-| Terminal width | 30s | Avoids `/proc/<pid>/stat` walk up 5 ancestors when stdin is a pipe (no controlling TTY). | `WIDTH_CACHE_TTL` |
+| Git | 30s (300s on `/mnt/*`) | Branch / dirty / ahead-behind. PR data is no longer here: it arrives in Claude Code's JSON (`pr.*`), so the old `gh pr view` network call (~1.5s cold) is gone. | `GIT_CACHE_TTL`, `GIT_CACHE_TTL_SLOW` |
+| Settings | 120s | Avoids scattered `jq` calls across `settings.local.json` + `settings.json` (HOME and CWD). Keyed by cwd + model. | `SETTINGS_CACHE_TTL` |
+| Transcript scan | per transcript growth | Transcripts reach 100MB+. A full `tac | grep` costs ~450ms; the cache remembers how many bytes were scanned and reads only the new tail. | n/a |
+| Terminal width | 300s | Only the fallback probe. Claude Code exports `$COLUMNS`, which is used directly. | `WIDTH_CACHE_TTL` |
 
 Reducing TTLs trades CPU for freshness. The defaults are tuned for "feels live but stays cheap" — bump them if your renders are still slow on a particular system.
 
@@ -53,15 +57,23 @@ Files read in priority order (first non-empty wins):
 3. `$CWD/.claude/settings.json`
 4. `$HOME/.claude/settings.json`
 
-### 2. Terminal width cache
+### 2. Terminal width
 
-Width detection walks `/proc/<pid>/stat` up to 5 ancestors looking for a parent pts device, because Claude Code does not pass a controlling terminal to statusline scripts. Cached per parent PID for 30s — survives across statusline invocations within a single Claude Code session.
+`$COLUMNS` (exported by Claude Code) is used when present. Otherwise width detection walks `/proc/<pid>/stat` up to 5 ancestors looking for a parent pts device, because Claude Code does not pass a controlling terminal to statusline scripts. Cached per parent PID for 30s — survives across statusline invocations within a single Claude Code session.
 
 Stale on terminal resize until TTL expires (30s max). Override by setting `TERM_WIDTH=<cols>` in the `statusLine.command` in `settings.json`.
 
-### 3. Git + PR cache (TTL bumped 5s → 60s)
+### 3. Git cache, PR from JSON
 
-`gh pr view` is the dominant cold-start cost (~1.5s, network). The cache key is the directory hash, so worktrees get independent caches. PR data goes stale 60s but new PRs are rare events.
+`gh pr view` used to be the dominant cold-start cost (~1.5s, network) and forced a 300s git TTL. The PR badge now reads Claude Code's `pr.*` JSON fields, so the git cache holds only local data and a 30s TTL is cheap (`git status` ≈ 30ms on ext4). The cache key is the directory hash, so worktrees get independent caches.
+
+### 3b. Worktree probing skipped
+
+Claude Code's `workspace.git_worktree` says whether the cwd is a linked worktree. When it is absent on a current payload the script skips the `git rev-parse` probes that used to run on every render.
+
+### 3c. Incremental transcript scan
+
+`/advisor` is session-only, so the script looks for the last `Advisor set to …` line in the transcript. It remembers bytes scanned and the last hit per session, re-reading only appended bytes (plus 4KB overlap). Measured on a 121MB transcript: ~455ms per render for a full scan versus a stat call when unchanged.
 
 ### 4. Subshell-fork reductions
 
@@ -118,9 +130,9 @@ Edit `~/.claude/statusline.sh` (or the package version + re-run install):
 
 ```bash
 # ── Sizing ──
-GIT_CACHE_TTL=60        # bump higher if PR / branch updates feel sluggish
-SETTINGS_CACHE_TTL=30   # bump if /effort, /advisor, output-style toggles lag
-WIDTH_CACHE_TTL=30      # bump if you rarely resize the terminal
+GIT_CACHE_TTL=30        # raise if git is slow on your repos; lower if branch changes lag
+SETTINGS_CACHE_TTL=120  # raise/lower trade-off for output-style / advisor settings changes
+WIDTH_CACHE_TTL=300     # fallback width probe only
 ```
 
 Reset all caches: `rm -rf /tmp/claude-statusline`
@@ -150,5 +162,4 @@ If you still see stacking after optimizing:
 Remaining wins, not yet applied because they require larger refactors:
 
 - **Eliminate subshell forks in `assemble_line`.** Each renderer is invoked as `seg=$($renderer)` which forks a subshell. With ~14 renderers per render this is ~210ms on WSL2. Refactor to write into a shared global (`SEG=""; $renderer; segments+=("$SEG")`) would save it. Touches every renderer.
-- **Single-pass transcript scan.** `render_thinking_effort` and `render_advisor` each run `tac | grep -m1 | grep -oP | head -1`. Could be merged into one awk pass over the tail. Only matters when transcripts are large and `/effort` / `/advisor` were set in-session.
-- **Conditional `gh pr view` skipping.** Detect offline state with a fast `getent hosts github.com` and skip the network call instead of waiting for it to time out. Currently masked by the 60s cache after first hit.
+- **Single-pass transcript scan.** Done in a different way: the scan is now incremental and cached (see 3c above).

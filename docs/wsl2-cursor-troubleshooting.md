@@ -11,9 +11,9 @@ If you see **both** of these symptoms, this doc is for you:
 
 | Layer | Default | Problem | Fix |
 |-------|---------|---------|-----|
-| Statusline `GIT_CACHE_TTL` | 60s | Warm renders 300–700ms on WSL2 /mnt/* → frames stack in scrollback | Bump to **300s** |
-| Statusline `SETTINGS_CACHE_TTL` | 30s | Re-parsing 4 settings files every 30s adds fork tax | Bump to **120s** |
-| Statusline `WIDTH_CACHE_TTL` | 30s | `/proc` walk on every other render | Bump to **300s** |
+| Statusline git cache | 30s | Warm renders 300–700ms on WSL2 /mnt/* → frames stack in scrollback | **Automatic**: repos under `/mnt/*` use `GIT_CACHE_TTL_SLOW` (300s) |
+| Statusline `SETTINGS_CACHE_TTL` | 120s | Re-parsing 4 settings files adds fork tax | Already **120s** by default |
+| Statusline `WIDTH_CACHE_TTL` | 300s | `/proc` walk (only when `$COLUMNS` is unset) | Already **300s** by default |
 | Cursor `terminal.integrated.scrollback` | 1000 lines | Stacked statusline frames burn buffer fast → old output evicted | Bump to **50000** |
 
 After both fixes: warm render ~220ms (was 567–695ms), scrollback retains full session.
@@ -23,25 +23,26 @@ After both fixes: warm render ~220ms (was 567–695ms), scrollback retains full 
 Two slowdowns compound:
 
 1. **WSL2 `fork()` tax.** Each statusline render forks ~14 subshells (one per renderer in `assemble_line`). On WSL2 each fork costs ~10–30ms vs ~1ms on native Linux. Baseline ~210ms before any I/O.
-2. **`/mnt/*` 9p protocol.** Windows NTFS volumes are exposed to WSL2 over Plan 9 protocol. Every `git status`, `git rev-parse`, `gh pr view` traverses this bridge. Order of magnitude slower than native ext4. A small repo with 2 commits still pays the per-syscall overhead.
+2. **`/mnt/*` 9p protocol.** Windows NTFS volumes are exposed to WSL2 over Plan 9 protocol. Every `git status` and `git rev-parse` traverses this bridge (the statusline no longer calls `gh pr view`; the PR badge comes from Claude Code's JSON). Order of magnitude slower than native ext4. A small repo with 2 commits still pays the per-syscall overhead.
 
 The script targets <200ms warm. On WSL2 + `/mnt/*` with default TTLs you sit at 300–700ms — past the [TUI redraw budget](performance.md#why-this-matters-tui-redraw-stacking) of ~300ms — and Claude Code stacks duplicate frames in scrollback instead of overwriting in place.
 
-## Fix 1 — Bump statusline TTLs
+## Fix 1 — Statusline TTLs (now the defaults)
 
-Edit `~/.claude/statusline.sh` (or `~/.claude/statusline-package/statusline.sh` + re-run `install.sh -y`):
+These are the shipped defaults; `GIT_CACHE_TTL_SLOW` applies automatically to repos under `/mnt/*`. If you edit them, change `~/.claude/statusline-package/statusline.sh` and re-run `install.sh -y`:
 
 ```bash
 # ── Sizing ──
-GIT_CACHE_TTL=300       # was 60
-SETTINGS_CACHE_TTL=120  # was 30
-WIDTH_CACHE_TTL=300     # was 30
+GIT_CACHE_TTL=30        # repos on native ext4
+GIT_CACHE_TTL_SLOW=300  # repos under /mnt/* (9p)
+SETTINGS_CACHE_TTL=120
+WIDTH_CACHE_TTL=300
 ```
 
 Cache invalidation behaviour:
 
-- Branch / dirty / PR data stays accurate inside the 5-minute window because you rarely cut new PRs that fast.
-- `/effort`, `/advisor`, output style toggles take up to 2 min to reflect. Lower `SETTINGS_CACHE_TTL` if that bothers you (cost ~10–20ms per render).
+- Branch / dirty state can lag up to 5 minutes on `/mnt/*` repos (30s elsewhere). PR data is live (it comes from Claude Code, not from a cache).
+- Output style and `advisorModel` setting changes take up to 2 min to reflect. Lower `SETTINGS_CACHE_TTL` if that bothers you (cost ~10–20ms per render). `/effort` and thinking are live from Claude Code's JSON; session-only `/advisor` changes are read incrementally from the transcript.
 - Terminal resizes take up to 5 min to re-detect width. Lower `WIDTH_CACHE_TTL` if you resize often, or set `TERM_WIDTH=<cols>` in your `settings.json` `statusLine.command` to skip detection entirely.
 
 Reset cache to force fresh values: `rm -rf /tmp/claude-statusline/`
@@ -130,7 +131,7 @@ If `Shift+ScrollWheel` works but plain `ScrollWheel` does not, Claude Code's TUI
 
 After both fixes, if duplicate frames return:
 
-1. Confirm the new statusline is the one running: `grep '^GIT_CACHE_TTL=' ~/.claude/statusline.sh` should print `300`.
+1. Confirm the new statusline is the one running: `grep '^GIT_CACHE_TTL_SLOW=' ~/.claude/statusline.sh` should print `GIT_CACHE_TTL_SLOW=300`.
 2. Start a **new** Claude Code session — the previous session loaded the old binary.
 3. Reduce `STATUSLINE_LINES` (`STATUSLINE_LINES=2 claude` or `=1`).
 4. `Ctrl+L` clears scrollback between long turns.

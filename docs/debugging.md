@@ -13,7 +13,19 @@ Set `STATUSLINE_DEBUG=1` to log the raw JSON that Claude Code sends to `~/.claud
 
 Or enable it for a single session: `STATUSLINE_DEBUG=1 claude`
 
-The log appends each payload separated by `---`. Useful for diagnosing missing fields, unexpected formats, or path issues.
+The log appends each payload separated by `---`, followed by a line such as `TERM_WIDTH=225 (src=COLUMNS, COLUMNS=225) TIER=full ...` showing which width source won (`env` = `TERM_WIDTH`, `COLUMNS`, or `probe`). Useful for diagnosing missing fields, unexpected formats, or path issues.
+
+## Reproducing a payload offline
+
+Pipe a captured payload (one JSON object from the log) into the script. A sandboxed cache dir keeps it from touching your real caches:
+
+```bash
+STATUSLINE_CACHE_DIR=$(mktemp -d) TERM_WIDTH=160 bash statusline.sh < payload.json
+```
+
+## Tests
+
+`bash tests/run.sh` runs ~60 fixture cases (add `-v` to print each render). Add a case whenever the payload shape or a renderer changes.
 
 ## Slow renders / TUI stacking
 

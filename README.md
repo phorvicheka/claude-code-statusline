@@ -11,12 +11,13 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 - **Color-coded progress bars**: Context window + rate limits (green/yellow/red)
 - **Model-colored names**: Amber (Opus), Blue (Sonnet), Cyan (Haiku)
 - **Clickable links**: Branch -> GitHub, PR -> PR page, Folder -> full path
-- **Git status**: Branch, clean/dirty, ahead/behind, PR number + merge status
-- **Session info**: Cost, duration, lines changed, rate limits, worktree
+- **Git status**: Branch, clean/dirty, ahead/behind, PR/MR number + review state (taken from Claude Code's own JSON: no `gh` CLI, no network)
+- **Session info**: Cost, duration, lines changed, rate limits, worktree, prompt-cache warm/cold + TTL, gateway spend limit, fast-mode ⚡ badge
 - **Settings group** (`settings:`): Thinking, effort, and advisor grouped on L3 in 3-line mode
 - **Output group** (`output:`): Output style and caveman mode grouped on L3 in 3-line mode
 - **Cross-platform**: Works on Linux, macOS, WSL, and Windows (Git Bash)
 - **Pure bash + jq**: No additional dependencies
+- **Tested**: `bash tests/run.sh` feeds crafted payloads (xhigh effort, Haiku, legacy shapes, hostile values, worktrees, widths) through the script
 
 ## Quick Install
 
@@ -39,7 +40,7 @@ In my Claude Code statusline at ~/.claude/statusline.sh, set SHOW_<ELEMENT>=fals
 
 > Example: `...set SHOW_COST_GROUP=false and SHOW_OUTPUT_STYLE=false for: cost group, output style...`
 >
-> Available elements: `MODEL`, `TOKENS`, `GIT`, `FOLDER`, `THINKING`, `EFFORT`, `OUTPUT_STYLE`, `CAVEMAN`, `AGENT`, `ADVISOR`, `VIM_MODE`, `VERSION`, `SESSION_ID`, `SESSION_NAME`, `COST_GROUP`, `RATE_LIMITS`, `WORKTREE`, `PR`, `CLICKABLE_LINKS`
+> Available elements: `MODEL`, `TOKENS`, `GIT`, `FOLDER`, `THINKING`, `EFFORT`, `OUTPUT_STYLE`, `CAVEMAN`, `AGENT`, `ADVISOR`, `VIM_MODE`, `VERSION`, `SESSION_ID`, `SESSION_NAME`, `COST_GROUP`, `RATE_LIMITS`, `WORKTREE`, `PR`, `FAST`, `CACHE`, `SPEND`, `CWD_PATH`, `CLICKABLE_LINKS`
 
 **Uninstall**:
 
@@ -113,7 +114,7 @@ See [Statusline Anatomy](docs/anatomy.md) for display modes, element reference, 
 
 ## Performance
 
-Render time targets **< 200ms warm**. Caches `git`/`gh pr view` (60s), `settings.json` parse (30s), and `TERM_WIDTH` detection (30s) under `/tmp/claude-statusline/`. See [docs/performance.md](docs/performance.md) for benchmarks, diagnosis, and TUI redraw stacking explained.
+Render time targets **< 200ms warm**. Caches git state (30s; 300s on WSL2 `/mnt/*`), the `settings.json` parse (120s), the transcript scan for `/advisor` (incremental), and a fallback `TERM_WIDTH` probe under `/tmp/claude-statusline/`. See [docs/performance.md](docs/performance.md) for benchmarks, diagnosis, and TUI redraw stacking explained.
 
 ## Known Limitations
 
@@ -131,18 +132,22 @@ See [Known Limitations](docs/known-limitations.md) for clickable link support an
 | Rate limits seem stale | Values update only after each assistant response. See [docs/rate-limit-staleness.md](docs/rate-limit-staleness.md). |
 | Unicode blocks show as boxes | Set `LANG=en_US.UTF-8` in your terminal. |
 | Branch link not clickable | Auto-disabled on unsupported terminals. Use Windows Terminal or `FORCE_HYPERLINK=1 claude`. |
-| Git info stale | Decrease `GIT_CACHE_TTL` (default 60s) or `rm -rf /tmp/claude-statusline/` |
+| Git info stale | Decrease `GIT_CACHE_TTL` (default 30s) or `rm -rf /tmp/claude-statusline/` |
 | Statusline + input box duplicated above output | TUI redraw stacking when render > ~300ms. See [docs/performance.md](docs/performance.md). The script targets < 200ms warm; if yours is slower, profile with `STATUSLINE_DEBUG=1` and bump TTLs. |
-| Effort / advisor / output style toggle slow to reflect | Settings preload cached for 30s. `rm -rf /tmp/claude-statusline/` to refresh, or lower `SETTINGS_CACHE_TTL`. |
-| Wrong width after terminal resize | Width cached per parent pid for 30s. `rm -rf /tmp/claude-statusline/` to refresh, or lower `WIDTH_CACHE_TTL`. |
+| Output style / advisor setting slow to reflect | Settings preload is cached (`SETTINGS_CACHE_TTL`, default 120s). `rm -rf /tmp/claude-statusline/` to refresh. Effort and thinking are live: they come straight from Claude Code's JSON. |
+| Wrong width after terminal resize | Claude Code passes the live size in `$COLUMNS`, which is used first and never cached. Only the fallback probe (builds that don't set `COLUMNS`) is cached (`WIDTH_CACHE_TTL`); `rm -rf /tmp/claude-statusline/` to refresh. |
 | Branch name truncated | Width detection may fail on Git Bash (now uses `tput cols` with 120-col default). Update to latest, or override: `TERM_WIDTH=<cols>` in settings.json command. |
 | Width detection wrong | Override: `TERM_WIDTH=<cols>` in settings.json command. |
-| PR# not showing | Requires `gh` CLI installed and authenticated. Hidden when no PR exists for branch. |
+| PR# not showing | Comes from Claude Code's `pr.*` JSON (shown only while an open PR/MR exists for the branch; GitLab MRs need Claude Code >= 2.1.234). The `gh` CLI is no longer used. |
 | Thinking not updating on `meta+t` | In-memory only -- not written to disk. Use `/config` to toggle persistently. |
-| Effort level not showing | Set via `/effort <level>` or `/config`. Supported: `low`, `medium`, `high`, `xhigh`, `max`, `auto`. `auto` removes the key (shows `◎ auto`). The default for Opus 4.7 in Claude Code is now `xhigh` (`◉ xhigh`). `max` and `xhigh` require transcript parsing (needs `transcript_path` in JSON). |
-| Effort level stuck | Remove `CLAUDE_CODE_EFFORT_LEVEL` from `settings.json` `env` block -- it overrides `/effort`. |
+| Effort level not showing | Effort is read from `effort.level` in Claude Code's JSON, which is absent when the active model has no effort parameter (e.g. Haiku), so the statusline then shows no effort on purpose. For other models set it with `/effort <level>`: `low`, `medium`, `high`, `xhigh`, `max`. |
+| Effort level stuck | `CLAUDE_CODE_EFFORT_LEVEL` (env or `settings.json` `env` block) overrides `/effort` inside Claude Code itself; remove it. The statusline just mirrors what Claude Code reports. |
 | Output style not showing | Reads from JSON input. Ensure Claude Code v2.1+ and start a fresh session. |
 | Something else looks wrong | Set `STATUSLINE_DEBUG=1` in your env to log raw JSON to `~/.claude/statusline-debug.log`. See [Debugging Guide](docs/debugging.md). |
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Uninstall
 
@@ -152,7 +157,7 @@ bash uninstall.sh
 
 ## Contributing
 
-See [Contributing: Adding New Elements](docs/contributing.md).
+See [Contributing: Adding New Elements](docs/contributing.md). Run `bash tests/run.sh` before committing.
 
 ## References
 

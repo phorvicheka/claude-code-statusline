@@ -22,7 +22,9 @@ Updates are debounced at 300ms.
 
 ## What Doesn't Help
 
-**`refreshInterval`** in settings.json re-runs your script on a timer, but it still receives the **same cached JSON data** from Claude Code. The JSON payload itself is only updated on the triggers listed above. So even with `refreshInterval: 1`, the `rate_limits` values inside the JSON will remain stale between interactions.
+**`refreshInterval`** in settings.json re-runs your script on a timer, but it still receives the **same cached JSON data** from Claude Code. The JSON payload itself is only updated on the triggers listed above. So even with `refreshInterval: 1`, the `rate_limits` percentages inside the JSON will remain stale between interactions.
+
+What it does help with: everything the script computes from the clock or from the local machine. `install.sh` sets `refreshInterval: 60`, which keeps the reset countdowns (`↺~2h14m`), the prompt-cache TTL and git branch / dirty state moving while Claude Code is idle. Claude Code also re-runs the script by itself when a rate-limit window reaches its `resets_at` and when a warm prompt cache reaches its `expires_at`.
 
 ## Behavior During Active Use
 

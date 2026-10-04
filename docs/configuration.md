@@ -48,6 +48,10 @@ SHOW_COST_GROUP=true
 SHOW_RATE_LIMITS=true
 SHOW_WORKTREE=true
 SHOW_PR=true
+SHOW_FAST=true         # ⚡ badge while fast mode is on
+SHOW_CACHE=true        # prompt-cache warm/cold badge (L2, full tier only)
+SHOW_SPEND=true        # gateway spend-limit meter (only present behind a gateway)
+SHOW_CWD_PATH=true     # user@host:~/path on the host row
 SHOW_CLICKABLE_LINKS=true
 ```
 
@@ -59,7 +63,7 @@ Elements are grouped by line in arrays at the bottom of the script:
 
 ```bash
 L1=(render_model render_tokens render_git render_folder render_thinking_effort render_agent render_vim)
-L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
+L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_spend render_cache)
 # Inside a git worktree:
 L3=(render_worktree)
 L4=(render_user_host render_output_style render_caveman render_version)
@@ -75,9 +79,10 @@ L4=(render_user_host render_output_style render_caveman render_version)
 ### Sizing
 
 ```bash
-GIT_CACHE_TTL=60        # cache git+PR (incl. gh pr view network) — see docs/performance.md
-SETTINGS_CACHE_TTL=30   # cache parsed settings.json values (4 files, 5 keys)
-WIDTH_CACHE_TTL=30      # cache TERM_WIDTH per parent pid (avoid /proc walk per render)
+GIT_CACHE_TTL=30        # cache git branch/dirty/ahead-behind (PR data comes from Claude Code's JSON)
+GIT_CACHE_TTL_SLOW=300  # same cache for repos under /mnt/* (WSL2 9p), picked automatically
+SETTINGS_CACHE_TTL=120  # cache parsed settings.json values (4 files, 6 keys)
+WIDTH_CACHE_TTL=300     # fallback width probe only; $COLUMNS (set by Claude Code) is never cached
 MAX_BRANCH_LEN=80       # max branch name length (full tier)
 TOKEN_BAR_WIDTH=10      # context bar character width
 RATE_BAR_WIDTH=10       # rate limit bar character width
@@ -97,4 +102,14 @@ THRESHOLD_YELLOW=75     # below = yellow, above = red
 | compact | 76-99 | Compact bars, branch max 30 chars, reset times still shown |
 | narrow | <76 | Forces single line, branch max 15 chars, reset times hidden |
 
+Width comes from `TERM_WIDTH` if set, else `$COLUMNS` (Claude Code exports the real terminal size before running the script), else a probe (`tput` / `/dev/tty` / parent-pts walk, cached) for builds that don't set it. `STATUSLINE_DEBUG=1` logs which source was used.
+
 Override: `TERM_WIDTH=150 claude`
+
+### Flex segments
+
+Two segments shrink to fit the row instead of wrapping it: the cwd in `user@host:cwd` and the session name in `s-name:`. `assemble_line` renders every other segment first, measures their visible width, and hands the remainder (minus a 6-column margin for double-width emoji) to the flex segment. Rows narrower than the fixed content still overflow; that is a property of the content, not of the flex logic.
+
+### Refresh timer
+
+`install.sh` sets `statusLine.refreshInterval` to 60 (seconds) unless one is already set; `STATUSLINE_REFRESH_INTERVAL=0 bash install.sh -y` skips it. It re-runs the script while Claude Code is idle, which keeps reset countdowns, the prompt-cache TTL and git state current. It does not refresh rate-limit percentages (see [rate-limit-staleness.md](rate-limit-staleness.md)).
