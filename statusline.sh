@@ -8,6 +8,7 @@
 #   https://github.com/sirmalloc/ccstatusline
 
 set -f  # disable globbing
+shopt -s extglob  # used by _vis_len to strip ANSI sequences without forking
 
 # ===========================================================================
 # Configuration
@@ -35,6 +36,10 @@ SHOW_COST_GROUP=true
 SHOW_RATE_LIMITS=true
 SHOW_WORKTREE=true
 SHOW_PR=true
+SHOW_FAST=true       # ⚡ badge while fast mode is on
+SHOW_CACHE=true      # prompt-cache warm/cold badge (L2, wide+ tiers only)
+SHOW_SPEND=true      # gateway spend-limit meter (L2, only when present)
+SHOW_CWD_PATH=true   # user@host:~/path on the host row (deduped vs worktree path)
 SHOW_CLICKABLE_LINKS=true
 
 # Auto-detect terminals that do NOT support OSC 8 clickable links.
@@ -54,11 +59,11 @@ if [[ "${FORCE_HYPERLINK:-0}" != "1" ]] && $SHOW_CLICKABLE_LINKS; then
 fi
 
 # ── Sizing ──
-GIT_CACHE_TTL=300       # cache git status (incl. gh pr view ~1.5s cold). bumped from 5s
-                        # to keep statusline render < 300ms so Claude Code TUI redraw
-                        # cycle does not stack frames in scrollback during long runs.
-                        # Bumped 60→300 for WSL2 /mnt/* (9p) hosts where git ops are slow.
-SETTINGS_CACHE_TTL=120  # cache parsed settings.json values (4 files, 5 keys).
+GIT_CACHE_TTL=30        # cache git branch/dirty/ahead-behind (PR data now comes free from
+                        # Claude Code's JSON, so the old 300s `gh pr view` ceiling is gone).
+                        # Keeps the branch from lagging a `git checkout` by minutes.
+GIT_CACHE_TTL_SLOW=300  # same cache, for repos on WSL2 /mnt/* (9p) hosts where git is slow.
+SETTINGS_CACHE_TTL=120  # cache parsed settings.json values (4 files, 6 keys).
                         # See docs/performance.md. Bumped 30→120.
 WIDTH_CACHE_TTL=300     # cache TERM_WIDTH per parent pid (avoid /proc walk every run).
                         # Bumped 30→300 (terminal resize rare).
@@ -87,6 +92,9 @@ C_RESET='\033[0m'
 SEP=" ${C_DIM}|${C_RESET} "
 TILDE=" ${C_DIM}~${C_RESET} "
 
+# Cache root (override for tests: STATUSLINE_CACHE_DIR=/tmp/x)
+CACHE_ROOT="${STATUSLINE_CACHE_DIR:-/tmp/claude-statusline}"
+
 # ===========================================================================
 # Read JSON from stdin
 # ===========================================================================
@@ -107,44 +115,85 @@ fi
 # Parse all fields in a single jq call
 # ===========================================================================
 eval "$(printf '%s' "$INPUT" | jq -r '
-  def s: @sh;
-  "MODEL_DISPLAY=" + (.model.display_name // "Unknown" | s),
-  "MODEL_ID=" + (.model.id // "" | s),
-  "CWD=" + (.cwd // "" | s),
-  "WORKSPACE_DIR=" + (.workspace.current_dir // "" | s),
-  "PROJECT_DIR=" + (.workspace.project_dir // "" | s),
-  "SESSION_ID=" + (.session_id // "" | s),
-  "SESSION_NAME=" + (.session_name // "" | s),
-  "VIM_MODE=" + (.vim.mode // "" | s),
-  "AGENT_NAME=" + (.agent.name // "" | s),
-  "WORKTREE_NAME=" + (.worktree.name // "" | s),
-  "WORKTREE_PATH=" + (.worktree.path // "" | s),
-  "WORKTREE_BRANCH=" + (.worktree.branch // "" | s),
-  "CC_VERSION=" + (.version // "" | s),
-  "CTX_SIZE=" + (.context_window.context_window_size // 0 | tostring),
-  "USED_PCT=" + (.context_window.used_percentage // 0 | tostring),
+  # Every field is reduced to a shell-quoted scalar before it reaches eval:
+  #  - sc : objects / arrays / null become "" (jq @sh aborts on objects, which
+  #         used to drop every field emitted after the offending one)
+  #  - q  : sc + @sh quoting, so a hostile value can never run as shell code
+  #  - num: only real JSON numbers pass; anything else becomes the default
+  #  - g  : safe path access (a field that changed type cannot abort the parse)
+  def sc: if . == null or type == "object" or type == "array" then "" else tostring end;
+  def q: sc | @sh;
+  def num(d): if type == "number" then tostring else d end;
+  def g(f): try f catch null;
+  def bool(f): (g(f) == true) | tostring;
+  def firststr(xs): [xs | select(type == "string" and length > 0)] | (.[0] // "");
+
+  # Claude Code sends effort and thinking as OBJECTS ({"level":..}, {"enabled":..});
+  # older builds / docs variants used scalars. Accept both. `//` is avoided on
+  # purpose: it treats `false` as missing, which would turn "thinking off" into "unknown".
+  (g(.thinking) | if type == "object" then .enabled else . end) as $think
+  | ([$think, g(.is_thinking), g(.alwaysThinkingEnabled)] | map(select(type == "boolean")) | .[0]) as $thinking_on
+  | (g(.effort) | if type == "object" then .level else . end) as $effort_obj
+  | "MODEL_DISPLAY=" + (firststr(g(.model.display_name)) | if . == "" then "Unknown" else . end | @sh),
+  "MODEL_ID=" + (g(.model.id) | q),
+  "CWD=" + (g(.cwd) | q),
+  "WORKSPACE_DIR=" + (g(.workspace.current_dir) | q),
+  "PROJECT_DIR=" + (g(.workspace.project_dir) | q),
+  "WS_MODERN=" + ((g(.workspace) | type == "object" and has("added_dirs")) | tostring),
+  "GIT_WORKTREE_JSON=" + (g(.workspace.git_worktree) | q),
+  "REPO_HOST=" + (g(.workspace.repo.host) | q),
+  "REPO_OWNER=" + (g(.workspace.repo.owner) | q),
+  "REPO_NAME=" + (g(.workspace.repo.name) | q),
+  "SESSION_ID=" + (g(.session_id) | q),
+  "SESSION_NAME=" + (g(.session_name) | q),
+  "VIM_MODE=" + (g(.vim.mode) | q),
+  "AGENT_NAME=" + (g(.agent.name) | q),
+  "WORKTREE_NAME=" + (g(.worktree.name) | q),
+  "WORKTREE_PATH=" + (g(.worktree.path) | q),
+  "WORKTREE_BRANCH=" + (g(.worktree.branch) | q),
+  "CC_VERSION=" + (g(.version) | q),
+  "CTX_SIZE=" + (g(.context_window.context_window_size) | num("0")),
+  "USED_PCT=" + (g(.context_window.used_percentage) | num("0")),
   "INPUT_TOKENS=" + (
-    if .context_window.current_usage != null then
-      ((.context_window.current_usage.input_tokens // 0)
-       + (.context_window.current_usage.cache_creation_input_tokens // 0)
-       + (.context_window.current_usage.cache_read_input_tokens // 0))
+    if (g(.context_window.current_usage) | type) == "object" then
+      ((g(.context_window.current_usage.input_tokens) | num("0") | tonumber)
+       + (g(.context_window.current_usage.cache_creation_input_tokens) | num("0") | tonumber)
+       + (g(.context_window.current_usage.cache_read_input_tokens) | num("0") | tonumber))
     else
-      (.context_window.total_input_tokens // 0)
+      (g(.context_window.total_input_tokens) | num("0") | tonumber)
     end | tostring
   ),
-  "EXCEEDS_200K=" + (.exceeds_200k_tokens // .context_window.exceeds_200k_tokens // false | tostring),
-  "TOTAL_COST=" + (.cost.total_cost_usd // 0 | tostring),
-  "TOTAL_DURATION_MS=" + (.cost.total_duration_ms // 0 | tostring),
-  "LINES_ADDED=" + (.cost.total_lines_added // 0 | tostring),
-  "LINES_REMOVED=" + (.cost.total_lines_removed // 0 | tostring),
-  "RATE_5H_PCT=" + (.rate_limits.five_hour.used_percentage // -1 | tostring),
-  "RATE_5H_RESETS=" + (.rate_limits.five_hour.resets_at // "" | tostring | s),
-  "RATE_7D_PCT=" + (.rate_limits.seven_day.used_percentage // -1 | tostring),
-  "RATE_7D_RESETS=" + (.rate_limits.seven_day.resets_at // "" | tostring | s),
-  "OUTPUT_STYLE=" + (.output_style.name // "" | s),
-  "IS_THINKING=" + (.is_thinking // .thinking // .alwaysThinkingEnabled // "unknown" | tostring),
-  "EFFORT_LEVEL_JSON=" + (.effort_level // .effortLevel // .effort // "" | s),
-  "TRANSCRIPT_PATH=" + (.transcript_path // "" | s)
+  "EXCEEDS_200K=" + ([g(.exceeds_200k_tokens), g(.context_window.exceeds_200k_tokens)] | map(select(type == "boolean")) | (.[0] // false) | tostring),
+  "TOTAL_COST=" + (g(.cost.total_cost_usd) | num("0")),
+  "TOTAL_DURATION_MS=" + (g(.cost.total_duration_ms) | num("0")),
+  "LINES_ADDED=" + (g(.cost.total_lines_added) | num("0")),
+  "LINES_REMOVED=" + (g(.cost.total_lines_removed) | num("0")),
+  "RATE_5H_PCT=" + (g(.rate_limits.five_hour.used_percentage) | num("-1")),
+  "RATE_5H_RESETS=" + (g(.rate_limits.five_hour.resets_at) | q),
+  "RATE_7D_PCT=" + (g(.rate_limits.seven_day.used_percentage) | num("-1")),
+  "RATE_7D_RESETS=" + (g(.rate_limits.seven_day.resets_at) | q),
+  "SPEND_PCT=" + (g(.rate_limits.spend_limit.used_percentage) | num("-1")),
+  "SPEND_RESETS=" + (g(.rate_limits.spend_limit.resets_at) | q),
+  "SPEND_USED=" + (g(.rate_limits.spend_limit.used_usd) | num("")),
+  "SPEND_LIMIT=" + (g(.rate_limits.spend_limit.limit_usd) | num("")),
+  "SPEND_PERIOD=" + (g(.rate_limits.spend_limit.period) | q),
+  "OUTPUT_STYLE=" + (g(.output_style.name) | q),
+  "IS_THINKING=" + (if $thinking_on == null then "unknown" else ($thinking_on | tostring) end | @sh),
+  "EFFORT_LEVEL_JSON=" + (firststr($effort_obj, g(.effort_level), g(.effortLevel)) | @sh),
+  # Modern payloads always carry thinking/fast_mode; an absent `effort` then means
+  # "model has no effort parameter" (e.g. Haiku), not "unknown".
+  "MODERN_SCHEMA=" + ((type == "object" and (has("thinking") or has("fast_mode"))) | tostring),
+  "FAST_MODE=" + bool(.fast_mode),
+  "PR_NUMBER=" + (g(.pr.number) | q),
+  "PR_URL=" + (g(.pr.url) | q),
+  "PR_STATE=" + (g(.pr.review_state) | q),
+  "PR_KIND=" + (g(.pr.kind) | q),
+  "PC_PRESENT=" + ((g(.prompt_cache) | type == "object") | tostring),
+  "PC_OBSERVED=" + bool(.prompt_cache.caching_observed),
+  "PC_WARM=" + bool(.prompt_cache.warm),
+  "PC_EXPIRES=" + (g(.prompt_cache.expires_at) | num("")),
+  "PC_HIT=" + (g(.prompt_cache.hit_ratio) | num("")),
+  "TRANSCRIPT_PATH=" + (g(.transcript_path) | q)
 ' 2>/dev/null)" || true
 
 # Defaults for unparseable input
@@ -152,8 +201,25 @@ eval "$(printf '%s' "$INPUT" | jq -r '
 : "${INPUT_TOKENS:=0}" "${TOTAL_COST:=0}" "${TOTAL_DURATION_MS:=0}"
 : "${LINES_ADDED:=0}" "${LINES_REMOVED:=0}"
 : "${RATE_5H_PCT:=-1}" "${RATE_5H_RESETS:=}" "${RATE_7D_PCT:=-1}" "${RATE_7D_RESETS:=}"
+: "${SPEND_PCT:=-1}" "${SPEND_RESETS:=}" "${SPEND_USED:=}" "${SPEND_LIMIT:=}" "${SPEND_PERIOD:=}"
 : "${OUTPUT_STYLE:=}" "${IS_THINKING:=unknown}"
-: "${EFFORT_LEVEL_JSON:=}" "${TRANSCRIPT_PATH:=}"
+: "${EFFORT_LEVEL_JSON:=}" "${MODERN_SCHEMA:=false}" "${WS_MODERN:=false}" "${TRANSCRIPT_PATH:=}"
+: "${FAST_MODE:=false}" "${GIT_WORKTREE_JSON:=}" "${REPO_HOST:=}" "${REPO_OWNER:=}" "${REPO_NAME:=}"
+: "${PR_NUMBER:=}" "${PR_URL:=}" "${PR_STATE:=}" "${PR_KIND:=}"
+: "${PC_PRESENT:=false}" "${PC_OBSERVED:=false}" "${PC_WARM:=false}" "${PC_EXPIRES:=}" "${PC_HIT:=}"
+# Anything that ends up in a bash arithmetic context must be a plain number.
+for _v in CTX_SIZE INPUT_TOKENS LINES_ADDED LINES_REMOVED TOTAL_DURATION_MS; do
+    [[ "${!_v}" =~ ^[0-9]+$ ]] || printf -v "$_v" '%s' 0
+done
+for _v in RATE_5H_PCT RATE_7D_PCT SPEND_PCT; do
+    [[ "${!_v}" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || printf -v "$_v" '%s' -1
+done
+[[ "$USED_PCT"   =~ ^[0-9]+(\.[0-9]+)?$ ]] || USED_PCT=0
+[[ "$TOTAL_COST" =~ ^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$ ]] || TOTAL_COST=0
+[[ "$PR_NUMBER"  =~ ^[0-9]+$ ]] || PR_NUMBER=""
+[[ "$PC_EXPIRES" =~ ^[0-9]+$ ]] || PC_EXPIRES=""
+[[ "$PC_HIT"     =~ ^[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]] || PC_HIT=""
+unset _v
 
 # ===========================================================================
 # Normalize Windows backslash paths
@@ -185,8 +251,9 @@ _detect_worktree() {
 
     [[ "$git_dir" == "$common_dir" ]] && return  # not a linked worktree
 
-    # This IS a linked worktree — populate name, path, branch
-    WORKTREE_NAME="${dir##*/}"
+    # This IS a linked worktree — populate name, path, branch.
+    # Name: prefer the real worktree name from workspace.git_worktree.
+    [[ -z "$WORKTREE_NAME" ]] && WORKTREE_NAME="${GIT_WORKTREE_JSON:-${dir##*/}}"
     WORKTREE_PATH="$dir"
 
     # Find branch: check if any worktree at this path has a branch
@@ -228,8 +295,18 @@ _detect_worktree() {
     fi
 }
 
+# Modern Claude Code (workspace.added_dirs present) states definitively whether the
+# cwd is a linked worktree: workspace.git_worktree is set, or absent. Absent means
+# "main working tree", so skip the git forks entirely (they ran on every render).
+# Older payloads have no such signal, so fall back to probing git.
 if [[ -z "$WORKTREE_NAME" ]]; then
-    _detect_worktree "$(_to_fwd "${CWD:-$WORKSPACE_DIR}")"
+    if [[ "$WS_MODERN" != "true" || -n "$GIT_WORKTREE_JSON" ]]; then
+        _detect_worktree "$(_to_fwd "${CWD:-$WORKSPACE_DIR}")"
+    fi
+    if [[ -z "$WORKTREE_NAME" && -n "$GIT_WORKTREE_JSON" ]]; then
+        WORKTREE_NAME="$GIT_WORKTREE_JSON"
+        WORKTREE_PATH="$(_to_fwd "${CWD:-$WORKSPACE_DIR}")"
+    fi
 fi
 
 # ===========================================================================
@@ -243,18 +320,22 @@ fi
 #   $CWD/.claude/settings.json
 #   $HOME/.claude/settings.json
 # ===========================================================================
-SETTINGS_CACHE_DIR="/tmp/claude-statusline"
+SETTINGS_CACHE_DIR="$CACHE_ROOT"
 SETTINGS_THINKING=""
 SETTINGS_EFFORT_LEVEL=""
+SETTINGS_EFFORT_MODEL=""   # modelSettings.<model-id>.effortLevel (beats top-level effortLevel)
 SETTINGS_EFFORT_ENV=""
 SETTINGS_OUTPUT_STYLE=""
 SETTINGS_ADVISOR_MODEL=""
 
 _load_settings() {
     mkdir -p "$SETTINGS_CACHE_DIR" 2>/dev/null
+    # Key by cwd + model: the per-model effort lookup depends on the model id.
+    # "settings2-" prefix: older "settings-*" files lack SETTINGS_EFFORT_MODEL.
+    local model_key="${MODEL_ID%%\[*}"   # claude-sonnet-5-5[1m] -> claude-sonnet-5-5 (assumed to match CC's key)
     local cwd_hash
-    cwd_hash=$(printf '%s' "${CWD:-_}" | cksum | awk '{print $1}')
-    local cache_file="${SETTINGS_CACHE_DIR}/settings-${cwd_hash}"
+    cwd_hash=$(printf '%s|%s' "${CWD:-_}" "$model_key" | cksum | awk '{print $1}')
+    local cache_file="${SETTINGS_CACHE_DIR}/settings2-${cwd_hash}"
 
     local needs_refresh=true
     if [[ -f "$cache_file" ]]; then
@@ -266,15 +347,16 @@ _load_settings() {
     fi
 
     if $needs_refresh; then
-        local thinking="" effort_level="" effort_env="" output_style="" advisor_model=""
+        local thinking="" effort_level="" effort_model="" effort_env="" output_style="" advisor_model=""
         local f parsed k v
         for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
                   "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
             [[ -f "$f" ]] || continue
-            # Single jq pass per file: extract all 5 keys at once
-            parsed=$(jq -r '
+            # Single jq pass per file: extract all 6 keys at once
+            parsed=$(jq -r --arg m "$model_key" '
                 "T=" + (if has("alwaysThinkingEnabled") then (.alwaysThinkingEnabled | tostring) else "" end),
                 "E=" + (if has("effortLevel") then .effortLevel else "" end),
+                "EM=" + (try ((.modelSettings // {})[$m].effortLevel // "") catch ""),
                 "EV=" + (.env.CLAUDE_CODE_EFFORT_LEVEL // ""),
                 "O=" + (if has("outputStyle") then .outputStyle else "" end),
                 "A=" + (if has("advisorModel") then .advisorModel else "" end)
@@ -283,6 +365,7 @@ _load_settings() {
                 case "$k" in
                     T)  [[ -z "$thinking"      && -n "$v" ]] && thinking="$v" ;;
                     E)  [[ -z "$effort_level"  && -n "$v" ]] && effort_level="$v" ;;
+                    EM) [[ -z "$effort_model"  && -n "$v" ]] && effort_model="$v" ;;
                     EV) [[ -z "$effort_env"    && -n "$v" ]] && effort_env="$v" ;;
                     O)  [[ -z "$output_style"  && -n "$v" ]] && output_style="$v" ;;
                     A)  [[ -z "$advisor_model" && -n "$v" ]] && advisor_model="$v" ;;
@@ -292,6 +375,7 @@ _load_settings() {
         {
             printf 'SETTINGS_THINKING=%q\n'      "$thinking"
             printf 'SETTINGS_EFFORT_LEVEL=%q\n'  "$effort_level"
+            printf 'SETTINGS_EFFORT_MODEL=%q\n'  "$effort_model"
             printf 'SETTINGS_EFFORT_ENV=%q\n'    "$effort_env"
             printf 'SETTINGS_OUTPUT_STYLE=%q\n'  "$output_style"
             printf 'SETTINGS_ADVISOR_MODEL=%q\n' "$advisor_model"
@@ -342,10 +426,16 @@ _save_cached_width() {
     printf '%s' "$width" > "${SETTINGS_CACHE_DIR}/width-${key}" 2>/dev/null
 }
 
+# Claude Code sets COLUMNS/LINES to the real terminal size before running the
+# script (https://code.claude.com/docs/en/statusline), so COLUMNS is authoritative.
+# The cache / tput / /proc-walk chain below only serves builds that don't set it.
+_width_src="env"
 if [[ "${TERM_WIDTH:-0}" -le 0 ]] 2>/dev/null; then
+    _width_src="COLUMNS"
     if [[ "${COLUMNS:-0}" -gt 0 ]] 2>/dev/null; then
         TERM_WIDTH=$COLUMNS
     else
+        _width_src="probe"
         # Try cache first to avoid /proc walk on every render
         _cached_w=$(_get_cached_width)
         if [[ "${_cached_w:-0}" -gt 0 ]] 2>/dev/null; then
@@ -404,13 +494,16 @@ case "$TIER" in
 esac
 
 # Dynamic folder cap: show as much as fits in L1 without overflowing TERM_WIDTH.
-# Fixed L1 overhead ≈ 70 chars (model + seps + tokens + git-prefix + dirty-indicator).
-_folder_max=$(( TERM_WIDTH - 70 - _branch_max ))
+# Fixed L1 overhead ≈ 70 chars (model + seps + tokens + git-prefix + dirty-indicator),
+# +2 while the ⚡ fast-mode badge is shown.
+_l1_overhead=70
+[[ "$FAST_MODE" == "true" ]] && _l1_overhead=72
+_folder_max=$(( TERM_WIDTH - _l1_overhead - _branch_max ))
 (( _folder_max < 10 )) && _folder_max=10
 
 if [[ "${STATUSLINE_DEBUG:-0}" == "1" ]]; then
-    printf 'TERM_WIDTH=%s TIER=%s _branch_max=%s _folder_max=%s\n' \
-        "$TERM_WIDTH" "$TIER" "$_branch_max" "$_folder_max" \
+    printf 'TERM_WIDTH=%s (src=%s, COLUMNS=%s) TIER=%s _branch_max=%s _folder_max=%s\n' \
+        "$TERM_WIDTH" "$_width_src" "${COLUMNS:-unset}" "$TIER" "$_branch_max" "$_folder_max" \
         >> "${HOME}/.claude/statusline-debug.log"
 fi
 
@@ -536,7 +629,30 @@ make_link() {
 # ===========================================================================
 # Git info with caching
 # ===========================================================================
-GIT_CACHE_DIR="/tmp/claude-statusline"
+GIT_CACHE_DIR="$CACHE_ROOT"
+
+# git@host:owner/repo(.git) | ssh://git@host/owner/repo | https://... -> https://host/owner/repo
+_normalize_remote() {
+    local url="$1"
+    [[ -z "$url" ]] && return
+    if [[ "$url" =~ ^ssh://([^@/]+@)?([^/:]+)(:[0-9]+)?/(.+)$ ]]; then
+        url="https://${BASH_REMATCH[2]}/${BASH_REMATCH[4]}"
+    elif [[ "$url" =~ ^[^@/]+@([^:/]+):(.+)$ ]]; then
+        url="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    fi
+    printf '%s' "${url%.git}"
+}
+
+# Branch page URL for the repo host (GitLab uses /-/tree/, Bitbucket /src/).
+_branch_url() {
+    local base="$1" branch="$2"
+    [[ -z "$base" ]] && return
+    case "$base" in
+        *gitlab*)    printf '%s/-/tree/%s' "$base" "$branch" ;;
+        *bitbucket*) printf '%s/src/%s'    "$base" "$branch" ;;
+        *)           printf '%s/tree/%s'   "$base" "$branch" ;;
+    esac
+}
 
 get_git_info() {
     local dir="$1"
@@ -548,7 +664,12 @@ get_git_info() {
 
     local dir_hash
     dir_hash=$(printf '%s' "$dir" | cksum | awk '{print $1}')
-    local cache_file="${GIT_CACHE_DIR}/git-${dir_hash}"
+    # "git2-" prefix: the cache no longer stores PR fields (older git-* files had 8 columns).
+    local cache_file="${GIT_CACHE_DIR}/git2-${dir_hash}"
+
+    # WSL2 /mnt/* (9p) hosts make git slow; use the longer TTL there only.
+    local ttl=$GIT_CACHE_TTL
+    [[ "$dir" == /mnt/* ]] && ttl=$GIT_CACHE_TTL_SLOW
 
     local needs_refresh=true
     if [[ -f "$cache_file" ]]; then
@@ -556,7 +677,7 @@ get_git_info() {
         mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)
         now=$(date +%s)
         age=$(( now - mtime ))
-        (( age < GIT_CACHE_TTL )) && needs_refresh=false
+        (( age < ttl )) && needs_refresh=false
     fi
 
     if $needs_refresh; then
@@ -614,35 +735,94 @@ get_git_info() {
             ahead="${ahead:-0}"; behind="${behind:-0}"
         fi
 
-        remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null)
-        remote_url="${remote_url/git@github.com:/https:\/\/github.com\/}"
-        remote_url="${remote_url%.git}"
-
-        # PR number + merge status via gh CLI (gracefully skip if gh not available).
-        # Single jq pass extracts all 3 fields as TSV (was 3 separate jq forks).
-        local pr_number="" pr_url="" pr_mergeable=""
-        if command -v gh >/dev/null 2>&1; then
-            local pr_json pr_tsv
-            pr_json=$(cd "$dir" && gh pr view --json number,url,mergeable 2>/dev/null)
-            if [[ -n "$pr_json" ]]; then
-                pr_tsv=$(printf '%s' "$pr_json" \
-                    | jq -r '[.number // "", .url // "", .mergeable // ""] | @tsv' 2>/dev/null)
-                IFS=$'\t' read -r pr_number pr_url pr_mergeable <<< "$pr_tsv"
-            fi
+        # Remote URL: Claude Code's workspace.repo already names it (any host); only
+        # ask git when the payload predates that field. PR data also comes from the
+        # JSON (pr.*), so `gh pr view` (~1.5s, network) is no longer needed.
+        if [[ -n "$REPO_HOST" && -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+            remote_url="https://${REPO_HOST}/${REPO_OWNER}/${REPO_NAME}"
+        else
+            remote_url=$(_normalize_remote "$(git -C "$dir" remote get-url origin 2>/dev/null)")
         fi
 
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$branch" "$dirty" "${ahead:-0}" "${behind:-0}" "$remote_url" "${pr_number:-}" "${pr_url:-}" "${pr_mergeable:-}" > "$cache_file"
+        printf '%s\t%s\t%s\t%s\t%s' "$branch" "$dirty" "${ahead:-0}" "${behind:-0}" "$remote_url" > "$cache_file"
     fi
 
     cat "$cache_file" 2>/dev/null
 }
 
 # ===========================================================================
+# Transcript scan (incremental, cached)
+# _tx_last <tag> <grep-line-regex> <grep-P-extract-regex>
+# Prints the value from the LAST transcript line matching the regex. The
+# transcript only grows, so remember how many bytes were scanned plus the last
+# hit, and on the next call scan just the new tail (re-reading 4KB of overlap
+# so a line split across two scans is not missed). A shrunk file (rewritten
+# transcript) triggers a full backwards scan. Result is cached per session+tag.
+# ===========================================================================
+_tx_last() {
+    local tag="$1" line_re="$2" extract_re="$3"
+    local f="$TRANSCRIPT_PATH"
+    [[ -n "$f" && -f "$f" ]] || return 0
+    local size
+    size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null) || return 0
+    [[ "$size" =~ ^[0-9]+$ ]] || return 0
+
+    local sid="${SESSION_ID//[^A-Za-z0-9_-]/}"
+    local cf="${CACHE_ROOT}/tx-${tag}-${sid:-nosession}"
+    local cs="" cv=""
+    [[ -f "$cf" ]] && IFS=$'\t' read -r cs cv < "$cf"
+
+    local hit=""
+    if [[ "$cs" =~ ^[0-9]+$ ]] && (( cs == size )); then
+        printf '%s' "$cv"; return 0
+    elif [[ "$cs" =~ ^[0-9]+$ ]] && (( cs < size )); then
+        local start=$(( cs > 4096 ? cs - 4096 : 0 ))
+        hit=$(tail -c +$(( start + 1 )) "$f" 2>/dev/null | grep -a "$line_re" | tail -n 1 \
+              | grep -oP "$extract_re" | head -1 || true)
+        [[ -z "$hit" ]] && hit="$cv"
+    else
+        hit=$(tac "$f" 2>/dev/null | grep -a -m1 "$line_re" | grep -oP "$extract_re" | head -1 || true)
+    fi
+    mkdir -p "$CACHE_ROOT" 2>/dev/null
+    printf '%s\t%s' "$size" "$hit" > "$cf" 2>/dev/null
+    printf '%s' "$hit"
+}
+
+# ===========================================================================
 # Element renderers
 # ===========================================================================
 
+# user@host[:cwd]. The cwd part (PS1-style, SHOW_CWD_PATH) is a "flex" segment:
+# assemble_line sets _FLEX_BUDGET to the columns left on the row, and the path is
+# left-truncated (…/tail) to fit, or dropped when there is no room. It is also
+# dropped when the worktree row already prints the same path.
 render_user_host() {
-    printf '\033[01;32m%s@%s\033[00m' "$(whoami)" "$(hostname -s)"
+    local u="${USER:-}" h="${HOSTNAME%%.*}"
+    [[ -z "$u" ]] && u=$(id -un 2>/dev/null)
+    [[ -z "$h" ]] && h=$(hostname -s 2>/dev/null)
+    printf '\033[01;32m%s@%s\033[00m' "$u" "$h"
+
+    $SHOW_CWD_PATH || return 0
+    local dir="${WORKSPACE_DIR:-${CWD:-$PWD}}"
+    [[ -z "$dir" ]] && return 0
+    local norm
+    norm=$(_to_fwd "$dir")
+    [[ "$norm" != "/" ]] && norm="${norm%/}"
+    if $_wt_row_shown && [[ "$norm" == "${WORKTREE_PATH%/}" ]]; then
+        return 0
+    fi
+    if [[ "$norm" == "$HOME" ]]; then
+        norm="~"
+    elif [[ "$norm" == "$HOME"/* ]]; then
+        norm="~${norm#"$HOME"}"
+    fi
+    # Room for ":" + path after user@host; unknown budget (0) means "no room".
+    local avail=$(( ${_FLEX_BUDGET:-0} - ${#u} - ${#h} - 2 ))
+    (( avail >= 8 )) || return 0
+    if (( ${#norm} > avail )); then
+        norm="…${norm: -$(( avail - 1 ))}"
+    fi
+    printf ':\033[01;34m%s\033[00m' "$norm"
 }
 
 render_model() {
@@ -658,6 +838,7 @@ render_model() {
     short="${short%% (*}"
     [[ "$TIER" == "narrow" ]] && short="${short// /}"
     printf '%b◆ %s%b' "$color" "$short" "$C_RESET"
+    $SHOW_FAST && [[ "$FAST_MODE" == "true" ]] && printf ' %b⚡%b' "$C_YELLOW" "$C_RESET"
     if $SHOW_VERSION && [[ -n "$CC_VERSION" ]]; then
         printf '%b ~ v%s%b' "$C_DIM" "$CC_VERSION" "$C_RESET"
     fi
@@ -687,10 +868,10 @@ render_git() {
     local git_info
     git_info=$(get_git_info "$CWD")
 
-    local g_branch="" g_dirty="" g_ahead="0" g_behind="0" g_remote="" g_pr_num="" g_pr_url="" g_pr_merge=""
+    local g_branch="" g_dirty="" g_ahead="0" g_behind="0" g_remote=""
 
     if [[ -n "$git_info" ]]; then
-        IFS=$'\t' read -r g_branch g_dirty g_ahead g_behind g_remote g_pr_num g_pr_url g_pr_merge <<< "$git_info"
+        IFS=$'\t' read -r g_branch g_dirty g_ahead g_behind g_remote <<< "$git_info"
     fi
 
     # Worktree branch overrides
@@ -703,7 +884,7 @@ render_git() {
     # Clickable branch link -> GitHub tree URL
     local branch_text="${C_BLUE}${display_branch}${C_RESET}"
     if [[ -n "$g_remote" ]]; then
-        branch_text=$(make_link "${g_remote}/tree/${g_branch}" "${C_BLUE}${display_branch}${C_RESET}")
+        branch_text=$(make_link "$(_branch_url "$g_remote" "$g_branch")" "${C_BLUE}${display_branch}${C_RESET}")
     fi
 
     local out="⎇ ${branch_text}"
@@ -721,17 +902,22 @@ render_git() {
         (( ${g_behind:-0} > 0 )) && out+=" ${C_RED}↓${g_behind}${C_RESET}"
     fi
 
-    # PR number with merge status indicator: dim "PR " + yellow clickable "#N"
-    if $SHOW_PR && [[ -n "$g_pr_num" ]]; then
-        local pr_num_text="${C_YELLOW}#${g_pr_num}${C_RESET}"
-        if [[ -n "$g_pr_url" ]]; then
-            pr_num_text=$(make_link "$g_pr_url" "${C_YELLOW}#${g_pr_num}${C_RESET}")
+    # PR / merge request from Claude Code's own JSON (pr.*): dim "PR " + yellow
+    # clickable "#N" + review state. No gh CLI, no network, GitLab-aware (pr.kind=mr).
+    if $SHOW_PR && [[ -n "$PR_NUMBER" ]]; then
+        local pr_label="PR"
+        [[ "$PR_KIND" == "mr" ]] && pr_label="MR"
+        local pr_num_text="${C_YELLOW}#${PR_NUMBER}${C_RESET}"
+        if [[ "$PR_URL" == http* ]]; then
+            pr_num_text=$(make_link "$PR_URL" "${C_YELLOW}#${PR_NUMBER}${C_RESET}")
         fi
-        local pr_text="${C_DIM}PR ${C_RESET}${pr_num_text}"
-        # Merge status: ✔ green (mergeable), ✗ red (conflicting)
-        case "${g_pr_merge}" in
-            MERGEABLE)   pr_text+=" ${C_GREEN}✔${C_RESET}" ;;
-            CONFLICTING) pr_text+=" ${C_RED}✗${C_RESET}" ;;
+        local pr_text="${C_DIM}${pr_label} ${C_RESET}${pr_num_text}"
+        # Review state: ✔ approved, ✗ changes requested, "draft", … pending
+        case "$PR_STATE" in
+            approved)           pr_text+=" ${C_GREEN}✔${C_RESET}" ;;
+            changes_requested)  pr_text+=" ${C_RED}✗${C_RESET}" ;;
+            draft)              pr_text+=" ${C_DIM}draft${C_RESET}" ;;
+            pending)            pr_text+=" ${C_DIM}…${C_RESET}" ;;
         esac
         out+=" ${TILDE}${pr_text}"
     fi
@@ -767,7 +953,7 @@ render_folder() {
 render_thinking_effort() {
     ($SHOW_THINKING || $SHOW_EFFORT) || return
 
-    # ── thinking: from JSON IS_THINKING, fall back to preloaded settings cache ──
+    # ── thinking: from JSON thinking.enabled, fall back to preloaded settings cache ──
     local thinking_icon="" thinking_color=""
     if $SHOW_THINKING; then
         local thinking_val="$IS_THINKING"
@@ -781,42 +967,42 @@ render_thinking_effort() {
         fi
     fi
 
-    # ── effort: JSON field → transcript → settings → env var ──
+    # ── effort ──
+    #  1. effort.level from the JSON: the live session value, including mid-session
+    #     /effort changes (incl. session-only "max") and per-model saved levels.
+    #  2. JSON of a current Claude Code but no effort key: the model has no effort
+    #     parameter (e.g. Haiku) → show nothing rather than guess.
+    #  3. Payloads from older Claude Code: transcript → settings (per-model, then
+    #     top-level) → env var.
     local effort_icon="" effort_color="" level=""
     if $SHOW_EFFORT; then
-        # 1. JSON field from Claude Code (future-proof: not yet in schema)
         level="$EFFORT_LEVEL_JSON"
-        # 2. Parse transcript JSONL for most recent /effort command output
-        #    Needed because "max" is session-only and never written to settings.json.
-        #    Only match <local-command-stdout> lines to avoid false positives from
-        #    agent output that might quote the effort text.
-        if [[ -z "$level" && -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
-            # Match only direct command output (content starts with the tag),
-            # not quoted text inside tool results or agent messages.
-            level=$(tac "$TRANSCRIPT_PATH" 2>/dev/null \
-                | grep -m1 '"content":"<local-command-stdout>[^"]*[Ee]ffort level' \
-                | grep -oP '(?:Set effort level to|Effort level set to) \K(low|medium|high|xhigh|max|auto)' \
-                | head -1 || true)
+        if [[ -z "$level" && "$MODERN_SCHEMA" != "true" ]]; then
+            level=$(_tx_last effort \
+                '"content":"<local-command-stdout>[^"]*[Ee]ffort level' \
+                '(?:Set effort level to|Effort level set to) \K(low|medium|high|xhigh|max|auto)')
+            [[ -z "$level" && -n "$SETTINGS_EFFORT_MODEL" ]] && level="$SETTINGS_EFFORT_MODEL"
+            [[ -z "$level" && -n "$SETTINGS_EFFORT_LEVEL" ]] && level="$SETTINGS_EFFORT_LEVEL"
+            [[ -z "$level" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]] && level="$CLAUDE_CODE_EFFORT_LEVEL"
+            [[ -z "$level" && -n "$SETTINGS_EFFORT_ENV" ]] && level="$SETTINGS_EFFORT_ENV"
+            [[ -z "$level" ]] && level="auto"
         fi
-        # 3. effortLevel key in settings JSON (preloaded cache, persisted default)
-        [[ -z "$level" && -n "$SETTINGS_EFFORT_LEVEL" ]] && level="$SETTINGS_EFFORT_LEVEL"
-        # 4. Fall back to CLAUDE_CODE_EFFORT_LEVEL env var (live)
-        if [[ -z "$level" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]]; then
-            level="$CLAUDE_CODE_EFFORT_LEVEL"
+        # Only plain level names reach the terminal.
+        [[ "$level" =~ ^[a-z0-9_-]{1,12}$ ]] || level=""
+        if [[ -n "$level" ]]; then
+            case "$level" in
+                auto)   effort_icon="◎"; effort_color="$C_DIM" ;;
+                low)    effort_icon="◔"; effort_color="$C_WHITE" ;;
+                medium) effort_icon="◑"; effort_color="$C_WHITE" ;;
+                high)   effort_icon="◕"; effort_color="$C_WHITE" ;;
+                xhigh)  effort_icon="◉"; effort_color="$C_MAGENTA" ;;
+                max)    effort_icon="●"; effort_color="$C_MAGENTA" ;;
+                *)      effort_icon="◈"; effort_color="$C_WHITE" ;;   # future level names
+            esac
         fi
-        # 5. Fall back to env var defined in settings.json env blocks (preloaded cache)
-        [[ -z "$level" && -n "$SETTINGS_EFFORT_ENV" ]] && level="$SETTINGS_EFFORT_ENV"
-        [[ -z "$level" ]] && level="auto"
-        case "$level" in
-            auto)   effort_icon="◎"; effort_color="$C_DIM" ;;
-            low)    effort_icon="◔"; effort_color="$C_WHITE" ;;
-            medium) effort_icon="◑"; effort_color="$C_WHITE" ;;
-            high)   effort_icon="◕"; effort_color="$C_WHITE" ;;
-            xhigh)  effort_icon="◉"; effort_color="$C_MAGENTA" ;;
-            max)    effort_icon="●"; effort_color="$C_MAGENTA" ;;
-            *)      effort_icon="◎"; effort_color="$C_DIM"; level="auto" ;;
-        esac
     fi
+
+    [[ -z "$thinking_icon" && -z "$effort_icon" ]] && return
 
     # ── render ────────────────────────────────────────────────────────
     printf '🧠 '
@@ -879,14 +1065,12 @@ render_agent() {
 render_advisor() {
     $SHOW_ADVISOR || return
     local model=""
-    # 1. Parse transcript for most recent /advisor command output (session-only)
-    if [[ -z "$model" && -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
-        model=$(tac "$TRANSCRIPT_PATH" 2>/dev/null \
-            | grep -m1 '"content":"<local-command-stdout>Advisor set to' \
-            | grep -oP '(?:Advisor set to )\K\w+' \
-            | head -1 || true)
-        [[ -n "$model" ]] && model="${model,,}"
-    fi
+    # 1. Most recent /advisor command output in the transcript (session-only).
+    #    Incremental + cached: transcripts reach 100MB+, a full scan per render cost ~450ms.
+    model=$(_tx_last advisor \
+        '"content":"<local-command-stdout>Advisor set to' \
+        '(?:Advisor set to )\K\w+')
+    [[ -n "$model" ]] && model="${model,,}"
     # 2. Fall back to advisorModel in settings JSON (preloaded cache, persisted default)
     if [[ -z "$model" && -n "$SETTINGS_ADVISOR_MODEL" ]]; then
         model="${SETTINGS_ADVISOR_MODEL,,}"
@@ -903,9 +1087,13 @@ render_advisor() {
 render_vim() {
     $SHOW_VIM_MODE || return
     [[ -z "$VIM_MODE" ]] && return
-    local mode_short="${VIM_MODE:0:1}"
-    local color="$C_GREEN"
-    [[ "$VIM_MODE" == "INSERT" ]] && color="$C_YELLOW"
+    # Documented values: NORMAL, INSERT, VISUAL, "VISUAL LINE"
+    local mode_short="${VIM_MODE:0:1}" color="$C_GREEN"
+    case "$VIM_MODE" in
+        INSERT)        color="$C_YELLOW" ;;
+        VISUAL)        color="$C_MAGENTA" ;;
+        "VISUAL LINE") mode_short="VL"; color="$C_MAGENTA" ;;
+    esac
     printf '%bvim:%b%s%b' "$C_DIM" "$color" "$mode_short" "$C_RESET"
 }
 
@@ -926,7 +1114,15 @@ render_session_ids() {
     fi
     if $SHOW_SESSION_NAME; then
         if [[ -n "$SESSION_NAME" ]]; then
-            parts+=("$(printf '%bs-name:%b%s%b' "$C_DIM" "$C_WHITE" "$SESSION_NAME" "$C_RESET")")
+            # Flex: fit the name into the columns left on the row (fixed part is
+            # "s-id:xxxxxxxx ~ s-name:" = 23 columns); no budget set = no truncation.
+            local name="$SESSION_NAME"
+            if (( ${_FLEX_BUDGET:-0} > 0 )); then
+                local name_max=$(( _FLEX_BUDGET - 23 ))
+                (( name_max < 8 )) && name_max=8
+                name=$(truncate_str "$name" "$name_max")
+            fi
+            parts+=("$(printf '%bs-name:%b%s%b' "$C_DIM" "$C_WHITE" "$name" "$C_RESET")")
         else
             parts+=("$(printf '%bs-name:--%b' "$C_DIM" "$C_RESET")")
         fi
@@ -1011,6 +1207,54 @@ render_rate_7d() {
     _render_rate "7d" "$RATE_7D_PCT" "$RATE_7D_RESETS"
 }
 
+# Gateway spend limit (rate_limits.spend_limit): only present behind a Claude apps
+# gateway with spend limits, so it is invisible for everyone else.
+render_spend() {
+    $SHOW_SPEND || return
+    (( ${SPEND_PCT%.*} >= 0 )) || return
+    local out
+    out=$(_render_rate "spend" "$SPEND_PCT" "$SPEND_RESETS")
+    if [[ -n "$SPEND_USED" && -n "$SPEND_LIMIT" ]]; then
+        out+=" ${C_DIM}\$${SPEND_USED}/\$${SPEND_LIMIT}${C_RESET}"
+    fi
+    printf '%b' "$out"
+}
+
+# Prompt cache (prompt_cache.*): warm → hit ratio + time until it goes cold;
+# cold → the next request re-caches the conversation. Full tier (>=140 cols) only:
+# narrower L2 rows have no room for it. Hidden when the session reports no caching.
+render_cache() {
+    $SHOW_CACHE || return
+    [[ "$PC_PRESENT" == "true" && "$PC_OBSERVED" == "true" ]] || return
+    [[ "$TIER" == "full" ]] || return
+    local now left=0
+    printf -v now '%(%s)T' -1 2>/dev/null || now=$(date +%s)
+    [[ "$PC_WARM" == "true" && -n "$PC_EXPIRES" ]] && left=$(( PC_EXPIRES - now ))
+    if (( left <= 0 )); then
+        printf '%bcache:%b %bcold%b' "$C_DIM" "$C_RESET" "$C_YELLOW" "$C_RESET"
+        return
+    fi
+    # hit_ratio is a 0..1 fraction; derive whole percent without forking awk.
+    local pct="" frac
+    case "$PC_HIT" in
+        "")        ;;
+        1|1.0*)    pct=100 ;;
+        *.*)       frac="${PC_HIT#*.}00"; pct=$(( 10#${frac:0:2} )) ;;
+        *)         pct=0 ;;
+    esac
+    local out="${C_DIM}cache:${C_RESET}"
+    if [[ -n "$pct" ]]; then
+        local c="$C_GREEN"
+        (( pct < 80 )) && c="$C_YELLOW"
+        (( pct < 50 )) && c="$C_RED"
+        out+=" ${c}${pct}%${C_RESET}"
+    else
+        out+=" ${C_GREEN}warm${C_RESET}"
+    fi
+    out+=" ${C_DIM}$(fmt_reset_time "$PC_EXPIRES")${C_RESET}"
+    printf '%b' "$out"
+}
+
 # Worktree: name + path. Branch omitted if it matches the git branch (L1).
 # Each element is capped so the whole line fits in one terminal row.
 render_worktree() {
@@ -1037,7 +1281,7 @@ render_worktree() {
         wt_git_info=$(get_git_info "$CWD")
         if [[ -n "$wt_git_info" ]]; then
             local _f2 _f3 _f4
-            IFS=$'\t' read -r g_branch_from_git _f2 _f3 _f4 remote_url _ <<< "$wt_git_info"
+            IFS=$'\t' read -r g_branch_from_git _f2 _f3 _f4 remote_url <<< "$wt_git_info"
         fi
         # Only show branch if it's different from the git branch
         if [[ "$WORKTREE_BRANCH" != "$g_branch_from_git" ]]; then
@@ -1045,7 +1289,7 @@ render_worktree() {
             display_branch=$(truncate_str "$WORKTREE_BRANCH" "$_wt_half")
             local branch_text="${C_BLUE}${display_branch}${C_RESET}"
             if [[ -n "$remote_url" ]]; then
-                branch_text=$(make_link "${remote_url}/tree/${WORKTREE_BRANCH}" "${C_BLUE}${display_branch}${C_RESET}")
+                branch_text=$(make_link "$(_branch_url "$remote_url" "$WORKTREE_BRANCH")" "${C_BLUE}${display_branch}${C_RESET}")
             fi
             out+=" ${C_DIM}- branch:${C_RESET}${branch_text}"
         fi
@@ -1089,21 +1333,65 @@ render_output_group() {
 # Line assembly
 # ===========================================================================
 
+# Visible width of a string with ANSI colour / OSC 8 link sequences removed.
+# Pure bash (no fork). Result in _VL. Wide glyphs (emoji) count as 1 — callers
+# keep a small safety margin.
+_vis_len() {
+    local t="$1"
+    t="${t//$'\033'\[*([0-9;])m/}"
+    t="${t//$'\033]8;;'*([!$'\a'])$'\a'/}"
+    _VL=${#t}
+}
+
+# Flex renderers can shrink to fit the row: the first one on a line is rendered
+# LAST, after every other segment's width is known, and handed _FLEX_BUDGET —
+# the columns left (TERM_WIDTH minus other segments, separators and a margin
+# for double-width glyphs). Without a budget (0) they print their full form.
+_FLEX_MARGIN=6
+_is_flex() { [[ "$1" == "render_user_host" || "$1" == "render_session_ids" ]]; }
+
 assemble_line() {
     local renderers=("$@")
     local segments=()
-    local seg
+    local seg flex=-1
 
+    _FLEX_BUDGET=0
     for renderer in "${renderers[@]}"; do
+        if (( flex < 0 )) && _is_flex "$renderer"; then
+            flex=${#segments[@]}
+            flex_renderer="$renderer"
+            segments+=("")
+            continue
+        fi
         seg=$($renderer)
         [[ -n "$seg" ]] && segments+=("$seg")
     done
 
-    (( ${#segments[@]} == 0 )) && return
+    if (( flex >= 0 )); then
+        local used=0 n=${#segments[@]} k
+        for (( k = 0; k < n; k++ )); do
+            (( k == flex )) && continue
+            _vis_len "${segments[$k]}"
+            used=$(( used + _VL ))
+        done
+        used=$(( used + 3 * (n - 1) ))   # " | " between segments
+        _FLEX_BUDGET=$(( TERM_WIDTH - used - _FLEX_MARGIN ))
+        (( _FLEX_BUDGET < 0 )) && _FLEX_BUDGET=0
+        seg=$($flex_renderer)
+        _FLEX_BUDGET=0
+        segments[$flex]="$seg"
+    fi
 
-    for (( i = 0; i < ${#segments[@]}; i++ )); do
+    # Drop empty segments (a flex renderer may legitimately print nothing).
+    local out=() i
+    for seg in "${segments[@]}"; do
+        [[ -n "$seg" ]] && out+=("$seg")
+    done
+    (( ${#out[@]} == 0 )) && return
+
+    for (( i = 0; i < ${#out[@]}; i++ )); do
         (( i > 0 )) && printf '%b' "$SEP"
-        printf '%b' "${segments[$i]}"
+        printf '%b' "${out[$i]}"
     done
 }
 
@@ -1119,6 +1407,7 @@ declare -a L1=() L2=() L3=() L4=()
 
 _has_worktree=false
 [[ -n "$WORKTREE_NAME" ]] && _has_worktree=true
+_wt_row_shown=false   # true when a dedicated worktree row prints the worktree path
 
 case "$STATUSLINE_LINES" in
     1)
@@ -1126,12 +1415,13 @@ case "$STATUSLINE_LINES" in
         ;;
     2)
         L1=(render_model render_tokens render_git render_folder render_agent render_vim)
-        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_user_host render_settings_group render_output_group)
+        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_spend render_cache render_user_host render_settings_group render_output_group)
         ;;
     *)
         L1=(render_model render_tokens render_git render_folder render_agent render_vim)
-        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d)
+        L2=(render_session_ids render_cost_group render_rate_5h render_rate_7d render_spend render_cache)
         if $_has_worktree; then
+            $SHOW_WORKTREE && _wt_row_shown=true
             L3=(render_worktree)
             L4=(render_user_host render_settings_group render_output_group)
         else
