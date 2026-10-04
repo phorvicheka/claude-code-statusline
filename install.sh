@@ -9,6 +9,10 @@ CLAUDE_DIR="${HOME}/.claude"
 TARGET="${CLAUDE_DIR}/statusline.sh"
 SETTINGS="${CLAUDE_DIR}/settings.json"
 CACHE_DIR="/tmp/claude-statusline"
+# Re-run the statusline every N seconds while Claude Code is idle (0 = don't set).
+# Keeps reset countdowns, prompt-cache TTL and git state current; it does NOT make
+# rate-limit percentages fresher (see docs/rate-limit-staleness.md).
+REFRESH_INTERVAL="${STATUSLINE_REFRESH_INTERVAL:-60}"
 
 # Flags
 AUTO_YES=false
@@ -65,13 +69,7 @@ fi
 
 ok "Dependencies satisfied (bash ${BASH_VERSION}, jq $(jq --version 2>&1), git)"
 
-# Optional: gh CLI for PR# display
-if command -v gh >/dev/null 2>&1; then
-    ok "Optional: gh CLI found (PR# display enabled)"
-else
-    warn "Optional: gh CLI not found (PR# display will be hidden)"
-    echo "  Install: https://cli.github.com/ then run 'gh auth login'"
-fi
+# PR / merge-request badge comes from Claude Code's own JSON (pr.*): no gh CLI needed.
 
 # ------------------------------------------------------------------
 # 2. Choose line count
@@ -146,7 +144,7 @@ if [[ -f "$SETTINGS" ]]; then
             fi
             if [[ "$overwrite" =~ ^[Yy] ]]; then
                 tmp=$(mktemp)
-                jq '.statusLine = {"type": "command", "command": "bash '"$TARGET"'"}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+                jq '.statusLine = {"type": "command", "command": "bash '"$TARGET"'"}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
                 ok "Updated statusLine in settings.json"
             else
                 warn "Skipped settings.json update"
@@ -154,7 +152,7 @@ if [[ -f "$SETTINGS" ]]; then
         fi
     else
         tmp=$(mktemp)
-        jq '. + {"statusLine": {"type": "command", "command": "bash '"$TARGET"'"}}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+        jq '. + {"statusLine": {"type": "command", "command": "bash '"$TARGET"'"}}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
         ok "Added statusLine config to settings.json"
     fi
 else
@@ -170,9 +168,30 @@ EOF
 fi
 
 # ------------------------------------------------------------------
-# 7. Create cache directory
+# 6b. refreshInterval (only when settings.json points at our script)
+# ------------------------------------------------------------------
+if [[ "$REFRESH_INTERVAL" =~ ^[0-9]+$ ]] && (( REFRESH_INTERVAL > 0 )) && [[ -f "$SETTINGS" ]] \
+   && [[ "$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null)" == *"statusline.sh"* ]]; then
+    if jq -e '.statusLine | has("refreshInterval")' "$SETTINGS" >/dev/null 2>&1; then
+        ok "Keeping existing statusLine.refreshInterval ($(jq -r '.statusLine.refreshInterval' "$SETTINGS")s)"
+    else
+        tmp=$(mktemp)
+        # cat > (not mv) keeps the file's permissions and any symlink to a profile settings file
+        if jq --argjson n "$REFRESH_INTERVAL" '.statusLine.refreshInterval = $n' "$SETTINGS" > "$tmp" \
+           && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; then
+            ok "Set statusLine.refreshInterval = ${REFRESH_INTERVAL}s (STATUSLINE_REFRESH_INTERVAL=0 to skip)"
+        else
+            warn "Could not set refreshInterval in settings.json (left unchanged)"
+        fi
+        rm -f "$tmp"
+    fi
+fi
+
+# ------------------------------------------------------------------
+# 7. Create cache directory (and drop cache files from older script versions)
 # ------------------------------------------------------------------
 mkdir -p "$CACHE_DIR"
+rm -f "$CACHE_DIR"/git-* "$CACHE_DIR"/settings-* 2>/dev/null || true
 ok "Cache directory ready: ${CACHE_DIR}"
 
 # ------------------------------------------------------------------
@@ -185,6 +204,8 @@ echo "  Mode:     ${line_choice}-line"
 echo "  Script:   ${TARGET}"
 echo "  Settings: ${SETTINGS}"
 echo "  Cache:    ${CACHE_DIR}"
+_ri=$(jq -r '.statusLine.refreshInterval // empty' "$SETTINGS" 2>/dev/null || true)
+[[ -n "$_ri" ]] && echo "  Refresh:  every ${_ri}s while idle (statusLine.refreshInterval)"
 echo ""
 echo "Start a new Claude Code session to see your statusline."
 echo "To change modes at runtime: STATUSLINE_LINES=3 claude"
