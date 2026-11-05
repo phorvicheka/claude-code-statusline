@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] - 2026-10-04
 
+### Changed
+
+- **5h / 7d hide when not applicable.** A window is hidden (not `--`) only when `rate_limits` is proven loaded
+  through a sibling window or `spend_limit` but this window is absent (Max/Team/Ultra without a 5h window).
+  Before any `rate_limits` arrive, `5h --` / `7d --` still show, so there is no startup flicker.
+- **`thinking` → `effort:` label.** Thinking-on is the default and is no longer shown; only `◇ no-think` appears
+  when it is off. Block: `🧠 effort: ◕ high`.
+
+### Fixed
+
+- **`/rename` showed late in `s-name:`.** The name came only from the JSON `session_name`, which updates on the
+  next statusline event. The latest `custom-title` entry in the transcript (written at once) now takes precedence.
+
 ### Security
 
 - **Cache poisoning / code execution via `/tmp`.** The settings cache lived in a predictable world-writable

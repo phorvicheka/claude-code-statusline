@@ -848,7 +848,7 @@ _tx_last() {
             IFS=$'\t' read -r cs cv < "$cf" 2>/dev/null
             # cv is displayed, cs is used in arithmetic: validate both.
             [[ "$cs" =~ ^[0-9]{1,15}$ ]] || { cs=""; cv=""; }
-            [[ "$cv" =~ ^[A-Za-z0-9_.-]*$ ]] || cv=""
+            [[ "$cv" =~ ^[A-Za-z0-9_.\ -]*$ ]] || cv=""   # space allowed: session titles
         fi
     fi
 
@@ -1149,16 +1149,20 @@ render_thinking_effort() {
         fi
     fi
 
+    # Thinking is on by default, so "on" carries no information: stay silent and
+    # surface only the deviation (◇ no-think). Unknown state is also silent.
+    [[ "$thinking_icon" == "◇" ]] || thinking_icon=""
+
     [[ -z "$thinking_icon" && -z "$effort_icon" ]] && return
 
     # ── render ────────────────────────────────────────────────────────
     printf '🧠 '
     if [[ -n "$thinking_icon" ]]; then
-        printf ' %b%s thinking%b' "$thinking_color" "$thinking_icon" "$C_RESET"
+        printf ' %b%s no-think%b' "$thinking_color" "$thinking_icon" "$C_RESET"
     fi
     if [[ -n "$effort_icon" ]]; then
         [[ -n "$thinking_icon" ]] && printf ' %b~%b' "$C_DIM" "$C_RESET"
-        printf ' %b%s %s%b' "$effort_color" "$effort_icon" "$level" "$C_RESET"
+        printf ' %beffort:%b %b%s %s%b' "$C_DIM" "$C_RESET" "$effort_color" "$effort_icon" "$level" "$C_RESET"
     fi
 }
 
@@ -1260,10 +1264,16 @@ render_session_ids() {
         parts+=("$(printf '%bs-id:%b%s%b' "$C_DIM" "$C_WHITE" "$short_id" "$C_RESET")")
     fi
     if $SHOW_SESSION_NAME; then
-        if [[ -n "$SESSION_NAME" ]]; then
+        # /rename appends a custom-title entry to the transcript at once, while the
+        # JSON session_name only catches up on the next statusline event (refresh
+        # tick or new message). The transcript entry is therefore the fresher source.
+        local tx_name
+        tx_name=$(_tx_last title '"type":"custom-title"' '(?<="customTitle":")[A-Za-z0-9 _.-]+(?=")' 2>/dev/null)
+        local cur_name="${tx_name:-$SESSION_NAME}"
+        if [[ -n "$cur_name" ]]; then
             # Flex: fit the name into the columns left on the row (fixed part is
             # "s-id:xxxxxxxx ~ s-name:" = 23 columns); no budget set = no truncation.
-            local name="$SESSION_NAME"
+            local name="$cur_name"
             if (( ${_FLEX_BUDGET:-0} > 0 )); then
                 local name_max=$(( _FLEX_BUDGET - 23 ))
                 (( name_max < 8 )) && name_max=8
@@ -1344,13 +1354,19 @@ _render_rate() {
     printf '%b' "$out"
 }
 
+# A window is "not applicable" (hidden, not `--`) only when the payload PROVES
+# rate_limits loaded via a sibling window/limit but this window is absent
+# (e.g. Max/Team/Ultra with no 5h window). With nothing loaded yet (startup,
+# before the first API response) we keep the `--` placeholder to avoid flicker.
 render_rate_5h() {
     $SHOW_RATE_LIMITS || return
+    (( ${RATE_5H_PCT%.*} < 0 && ${RATE_7D_PCT%.*} >= 0 )) && return
     _render_rate "5h" "$RATE_5H_PCT" "$RATE_5H_RESETS"
 }
 
 render_rate_7d() {
     $SHOW_RATE_LIMITS || return
+    (( ${RATE_7D_PCT%.*} < 0 && ( ${RATE_5H_PCT%.*} >= 0 || ${SPEND_PCT%.*} >= 0 ) )) && return
     _render_rate "7d" "$RATE_7D_PCT" "$RATE_7D_RESETS"
 }
 

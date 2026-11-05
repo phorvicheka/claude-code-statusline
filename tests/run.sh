@@ -82,19 +82,37 @@ nlines(){ local n; n=$(printf '%s\n' "$LAST_OUT" | grep -c .); [[ "$n" == "$2" ]
 
 echo "── effort / thinking (the xhigh bug) ──"
 render '.'
-has   "xhigh object renders thinking on + xhigh" "◆ thinking ~ ◉ xhigh"
+has   "xhigh object renders labelled effort" "effort: ◉ xhigh"
+hasnt "thinking on is silent (default state)" "thinking"
 quiet "no jq/stderr noise on modern payload"
 render '.effort.level="max"';              has   "max renders ● max" "● max"
 render '.effort.level="low"';              has   "low renders ◔ low" "◔ low"
-render '.thinking.enabled=false';          has   "thinking.enabled=false renders off" "◇ thinking"
+render '.thinking.enabled=false';          has   "thinking.enabled=false renders no-think marker" "◇ no-think ~ effort: ◉ xhigh"
 render '.thinking.enabled=false';          hasnt "thinking.enabled=false is not shown as on" "◆ thinking"
 render 'del(.effort)'
 hasnt "effort absent (e.g. Haiku) hides effort: no xhigh" "xhigh"
 hasnt "effort absent hides effort: no settings 'high'"    "◕ high"
 hasnt "effort absent hides effort: no 'auto' placeholder" "auto"
-has   "effort absent still shows thinking" "◆ thinking"
+hasnt "effort absent + thinking on renders no brain block" "🧠"
+render 'del(.effort) | .thinking.enabled=false'
+has   "effort absent + thinking off still shows no-think" "◇ no-think"
 render '.effort={}'
 hasnt "effort object without level hides effort" "auto"
+
+echo "── rate limit windows hide when not applicable ──"
+render '.rate_limits={five_hour:{used_percentage:38,resets_at:4102444800},seven_day:{used_percentage:18,resets_at:4102444800}}'
+has   "both windows present render both" "5h "
+has   "7d renders when present" "7d "
+render '.rate_limits={seven_day:{used_percentage:18,resets_at:4102444800}}'
+hasnt "5h hidden when 7d loaded but no 5h window" "5h"
+has   "7d still shown" "7d "
+render '.'
+has   "no rate_limits yet keeps 5h placeholder" "5h --"
+has   "no rate_limits yet keeps 7d placeholder" "7d --"
+render '.rate_limits={five_hour:{used_percentage:5,resets_at:4102444800}}'
+hasnt "7d hidden when 5h loaded but no 7d window" "7d"
+render '.rate_limits={spend_limit:{used_percentage:5,used_usd:1,limit_usd:20,period:"month"}}'
+hasnt "7d hidden when only spend limit present" "7d"
 
 echo "── legacy payloads (older Claude Code) ──"
 render 'del(.effort,.thinking,.fast_mode) | .effort_level="medium"'
@@ -116,6 +134,20 @@ render '.thinking="$(touch '"$SANDBOX"'/pwned2)"'
 [[ ! -e "$SANDBOX/pwned2" ]] && ok "hostile scalar thinking is not executed" || bad "hostile scalar thinking is not executed" "pwned2 file created"
 LAST_OUT=$(printf 'not json' | HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" TERM_WIDTH=160 bash "$SCRIPT" 2>/dev/null | strip)
 [[ -n "$LAST_OUT" ]] && ok "garbage stdin still prints something" || bad "garbage stdin still prints something" "empty output"
+
+echo "── /rename shows at once (custom-title from transcript beats stale JSON) ──"
+TXN="$SANDBOX/txn.jsonl"
+: > "$TXN"
+render ".transcript_path=\"$TXN\" | .session_id=\"rn-sess\" | .session_name=\"old-name\""
+has   "no custom-title: JSON session_name used" "s-name:old-name"
+printf '{"type":"custom-title","customTitle":"improve-statusline","sessionId":"rn-sess"}\n' >> "$TXN"
+render ".transcript_path=\"$TXN\" | .session_id=\"rn-sess\" | .session_name=\"old-name\""
+has   "/rename visible before JSON catches up" "s-name:improve-statusline"
+printf '{"type":"custom-title","customTitle":"second name","sessionId":"rn-sess"}\n' >> "$TXN"
+render ".transcript_path=\"$TXN\" | .session_id=\"rn-sess\" | .session_name=\"old-name\""
+has   "later rename wins, spaces kept" "s-name:second name"
+render ".transcript_path=\"$TXN\" | .session_id=\"rn-sess\" | .session_name=\"old-name\""
+has   "unchanged transcript: cached title still shown" "s-name:second name"
 
 echo "── transcript scan (advisor / legacy effort), incremental cache ──"
 TX="$SANDBOX/tx.jsonl"

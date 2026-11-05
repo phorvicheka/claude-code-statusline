@@ -4,20 +4,20 @@
 
 **1-line** (`STATUSLINE_LINES=1`):
 ```
-user@host | ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔  ~ PR #42 ✔ | myapp | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: 🔎  explanatory | agent:review | vim:N | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
+user@host | ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main ✔  ~ PR #42 ✔ | myapp | settings: 🧠  effort: ◕ high ~ advisor:opus | output: 🔎  explanatory | agent:review | vim:N | s-id:abc123de | cost: $1.23 ~ 12m34s ~ +42/-8
 ```
 
 **2-line** (`STATUSLINE_LINES=2`):
 ```
 ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | agent:review | vim:N
-s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d | user@host | settings: 🧠  ◇ thinking ~ ◎ auto ~ advisor:opus | output: ⚙️  default
+s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d | user@host | settings: 🧠  ◇ no-think ~ effort: ◎ auto ~ advisor:opus | output: ⚙️  default
 ```
 
 **3-line** (`STATUSLINE_LINES=3`, default) — no worktree:
 ```
 ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | agent:review | vim:N
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
-user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: 🎓  learning ~ ◕  caveman
+user@host | settings: 🧠  effort: ◕ high ~ advisor:opus | output: 🎓  learning ~ ◕  caveman
 ```
 
 **3-line** (`STATUSLINE_LINES=3`, default) — inside a git worktree (L3 + L4):
@@ -25,7 +25,7 @@ user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: �
 ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 48% 96k/1m | ⎇ main 🛠️  ↑2↓1  ~ PR #42 ✔ | myapp | agent:review | vim:N
 s-id:abc123de ~ s-name:my-session | cost: $1.23 ~ 12m34s ~ +42/-8 | 5h ███░░░░░░░ 38% ↺~2h14m | 7d █░░░░░░░░░ 18% ↺~4d
 wt: name:feat-auth - path:/home/user/projects/.git/worktrees/feat-auth
-user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: 🎓  learning ~ ◕  caveman
+user@host | settings: 🧠  effort: ◕ high ~ advisor:opus | output: 🎓  learning ~ ◕  caveman
 ```
 
 (Branch omitted when it matches L1 git branch; shown only on different branches)
@@ -34,14 +34,14 @@ user@host | settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus | output: �
 ```
 ◆ Opus 4.6 ~ v2.1.97 | ░░░░░░░░░░ 0% 0/1.0m | ⎇ feature/my-branch 🛠️ | myapp
 s-id:536ea9b1 ~ s-name:-- | cost: -- ~ 1s ~ -- | 5h -- | 7d --
-user@host | settings: 🧠  ◇ thinking ~ ◎ auto | output: ⚙️  default
+user@host | settings: 🧠  ◇ no-think ~ effort: ◎ auto | output: ⚙️  default
 ```
 
 **High usage** (3-line default):
 ```
 ◆ Opus 4.6 ~ v2.1.97 | ████░░░░░░ 40% 395k/1.0m ⚠️ | ⎇ main ✔ | myapp
 s-id:1a0230da ~ s-name:improve-coverage | cost: $134.00 ~ 20h35m ~ +8477/-583 | 5h ██░░░░░░░░ 25% ↺~2h54m | 7d █████████░ 91% ↺~21h54m
-user@host | settings: 🧠  ◆ thinking ~ ● max | output: ⚙️  default
+user@host | settings: 🧠  effort: ● max | output: ⚙️  default
 ```
 
 ## Elements Reference
@@ -87,7 +87,7 @@ When you're inside a git worktree, L3 renders worktree details and the host/sett
 | Worktree path | `- path:/home/user/.../feat-auth` (full width) | `SHOW_WORKTREE` |
 | Worktree branch | `- branch:wt-feat-auth` (shown only if different from L1 branch, clickable) | `SHOW_WORKTREE` |
 | User@host:path ▸marker | `phorvicheka@DESKTOP-NVB94AN:~/projects/api ▸src/routes` | Host, plus the anchor (project / worktree root) path and, after a `cd`, the dim `▸subdir` marker. The path is left-truncated (`…/tail`) to fit the row and hidden when there is no room; the marker takes the room left after it and truncates first (`▸…/routes`). When the worktree row already prints the path only the marker follows the host | `SHOW_CWD_PATH` |
-| Settings group | `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
+| Settings group | `settings: 🧠  effort: ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
 | Output group | `output: ⚙️  default ~ ◕  caveman` | `SHOW_OUTPUT_STYLE` / `SHOW_CAVEMAN` |
 
 ### Where am I? (anchor and drift marker)
@@ -115,7 +115,7 @@ In 3-line mode `user@host:path` stays on the settings row only while the termina
 | Element | Example | Toggle |
 |---------|---------|--------|
 | User@host ▸marker | `phorvicheka@DESKTOP-NVB94AN ▸src/routes` | Same element as above; the path is dropped here because the worktree row already prints it, the marker (when drifted) stays | `SHOW_CWD_PATH` |
-| Settings group | `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
+| Settings group | `settings: 🧠  effort: ◕ high ~ advisor:opus` | `SHOW_THINKING` / `SHOW_EFFORT` / `SHOW_ADVISOR` |
 | Output group | `output: ⚙️  default ~ ◕  caveman` | `SHOW_OUTPUT_STYLE` / `SHOW_CAVEMAN` |
 
 ### Caveman Mode Icons
@@ -133,7 +133,7 @@ In 3-line mode `user@host:path` stays on the settings row only while the termina
 
 ## Thinking & Effort
 
-Rendered as part of the `settings:` group on L3 (3-line mode) or as standalone elements on 1-line/2-line modes: `settings: 🧠  ◆ thinking ~ ◕ high ~ advisor:opus`
+Rendered as part of the `settings:` group on L3 (3-line mode) or as standalone elements on 1-line/2-line modes: `settings: 🧠  effort: ◕ high ~ advisor:opus`. Thinking is on by default and therefore silent; only `◇ no-think` is shown (before the effort) when it is off.
 
 Claude Code sends both as **objects** in the statusline JSON: `thinking: {"enabled": true}` and `effort: {"level": "xhigh"}`. (Older versions of this script read them as scalars, which made thinking always render off and dropped the effort level; see `tests/run.sh`.) Scalar forms from older Claude Code builds are still accepted.
 
