@@ -9,6 +9,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 - **3 display modes**: 1-line (compact), 2-line, or 3-line (default; grows to 4 rows inside a git worktree; version shown next to model on all modes)
 - **Adaptive width**: Gracefully degrades across 4 terminal width tiers
 - **Color-coded progress bars**: Context window + rate limits (green/yellow/red)
+- **Auto-compact aware**: with `autoCompactWindow` below the model window, the context bar measures against it (`399k/⟲400k · 1.0m max`)
 - **Model-colored names**: Amber (Opus), Blue (Sonnet), Cyan (Haiku)
 - **Clickable links**: Branch -> GitHub, PR -> PR page, Folder -> full path
 - **Git status**: Branch, clean/dirty, ahead/behind, PR/MR number + review state (taken from Claude Code's own JSON: no `gh` CLI, no network)
@@ -118,7 +119,7 @@ Render time targets **< 200ms warm**. Caches git state (30s; 300s on WSL2 `/mnt/
 
 ## Known Limitations
 
-See [Known Limitations](docs/known-limitations.md) for clickable link support and rate limit data freshness.
+See [Known Limitations](docs/known-limitations.md) for clickable link support, rate limit data freshness, and the auto-compact limit.
 
 ## Troubleshooting
 

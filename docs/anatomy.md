@@ -51,9 +51,10 @@ user@host | settings: 🧠  effort: ● max | output: ⚙️  default
 | Element | Example | Meaning | Color | Toggle |
 |---------|---------|---------|-------|--------|
 | Model | `◆ Opus 4.6 ~ v2.1.97` | Current Claude model + version | amber=Opus, blue=Sonnet, cyan=Haiku | `SHOW_MODEL` / `SHOW_VERSION` |
-| Context bar | `████░░░░░░ 48%` | Context window used | green <50%, yellow 50-74%, red >=75% | `SHOW_TOKENS` |
+| Context bar | `████░░░░░░ 48%` | Context window used (or auto-compact limit used, see `⟲`) | green <50%, yellow 50-74%, red >=75% | `SHOW_TOKENS` |
 | Token counts | `395k/1.0m` | Used / max tokens | white / dim | `SHOW_TOKENS` |
 | Context warning | `⚠️` | Exceeds 200k tokens | red | `SHOW_TOKENS` |
+| Auto-compact limit | `399k/⟲400k · 1.0m max` | Shown when `autoCompactWindow` is below the model window. The bar and % are then measured against the limit (`⟲`), so red means compaction is near. Tiers under 100 columns drop `· 1.0m max`, but `⟲` always stays | white / dim | `SHOW_TOKENS` |
 | Git branch | `⎇ feature/auth` | Current branch (clickable) | blue | `SHOW_GIT` |
 | Git status | `✔` / `🛠️` | Clean / dirty working tree | green / yellow | `SHOW_GIT` |
 | Ahead/Behind | `↑2` `↓1` | Commits ahead/behind upstream | green / red | `SHOW_GIT` |

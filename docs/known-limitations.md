@@ -21,3 +21,19 @@ References: [Issue #26356](https://github.com/anthropics/claude-code/issues/2635
 Rate limit values (5h/7d) update only after each Claude assistant response, not in real-time. They may appear stale when idle. This is a Claude Code platform limitation, not a bug in this statusline.
 
 See [rate-limit-staleness.md](rate-limit-staleness.md) for details.
+
+## Auto-Compact Limit (`⟲`)
+
+Claude Code does not send the auto-compact limit in the statusline JSON, and its `used_percentage` is always measured against the full model window. The statusline therefore resolves the limit itself:
+
+1. Env `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (`400000`, `400k`, `1M`).
+2. The highest-priority settings file (`$CWD/.claude/settings.local.json`, `~/.claude/settings.local.json`, `$CWD/.claude/settings.json`, `~/.claude/settings.json`) that sets `modelSettings.<model>.autoCompactWindow` or top-level `autoCompactWindow`. Per-model wins inside that file, and `"auto"` means the default display.
+3. Clamped to 100k–1M, then lowered by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`.
+
+The rescale is off when `autoCompactEnabled` is `false`, when `DISABLE_AUTO_COMPACT` or `DISABLE_COMPACT` is set, or when `current_usage` is missing.
+
+Not covered:
+
+- Managed settings and the `--autocompact` launch flag are not read.
+- Settings are cached for 120 s, so a `/autocompact` change can take up to two minutes to show.
+- `⟲` (U+27F2) may be missing from some Windows console fonts.

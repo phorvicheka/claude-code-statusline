@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] - 2026-10-04
 
+### Added
+
+- **Auto-compact limit in the context segment.** When `autoCompactWindow` is below the model window, the bar
+  and % are measured against it: `█████████░ 99% 399k/⟲400k · 1.0m max`. Before, `used_percentage` was
+  measured against the full window, so a 1M model with a 400k limit showed 40% when compaction was close.
+  - Source, in order: env `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then the highest-priority settings file that sets
+    `modelSettings.<model>.autoCompactWindow` or top-level `autoCompactWindow` (per-model wins in that file).
+    The value is clamped to 100k–1M, and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers it.
+  - Not applied when `autoCompactEnabled: false`, `DISABLE_AUTO_COMPACT`/`DISABLE_COMPACT` is set, the value is
+    `"auto"`, or `current_usage` is missing (only cumulative totals are available then).
+  - Tiers under 100 columns drop `· 1.0m max`. `⟲` always shows, so `/400k` is never read as the model window.
+  - The settings cache file prefix is now `settings3-`.
+
 ### Changed
 
 - **5h / 7d hide when not applicable.** A window is hidden (not `--`) only when `rate_limits` is proven loaded

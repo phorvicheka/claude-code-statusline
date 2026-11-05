@@ -26,7 +26,8 @@ unset TERM_PROGRAM WT_SESSION KITTY_PID FORCE_HYPERLINK COLUMNS TERM_WIDTH
 cat > "$HOME/.claude/settings.json" <<'EOF'
 {
   "effortLevel": "high",
-  "modelSettings": { "claude-sonnet-5-5": { "effortLevel": "xhigh" } },
+  "modelSettings": { "claude-sonnet-5-5": { "effortLevel": "xhigh" },
+                     "claude-opus-5-5":   { "autoCompactWindow": 400000 } },
   "advisorModel": "opus"
 }
 EOF
@@ -306,6 +307,55 @@ hasnt "real worktree payload: no marker (cwd is the worktree root)" "▸"
 n=$(grep -o "$GW" <<<"$LAST_OUT" | wc -l)
 [[ "$n" == "1" ]] && ok "real worktree payload: path printed once" || bad "real worktree payload: path printed once" "appears $n times"
 
+echo "── auto-compact limit (autoCompactWindow) ──"
+OPUS='.model.id="claude-opus-5-5[1m]" | .model.display_name="Opus 5.5 (1M context)"'
+render "$OPUS"
+has   "per-model window: rescaled % and ⟲ limit" "25% 100k/⟲400k · 1.0m max"
+render '.'
+hasnt "unset for this model: today's display" "⟲"
+has   "unset for this model: today's display" "10% 100k/1.0m"
+render "$OPUS | .context_window.context_window_size=200000"
+hasnt "window not below model window: no rescale" "⟲"
+TERM_WIDTH_OVERRIDE=80 render "$OPUS"
+has   "compact tier keeps ⟲, drops the model-size tail" "100k/⟲400k"
+hasnt "compact tier keeps ⟲, drops the model-size tail" "1.0m max"
+TERM_WIDTH_OVERRIDE=60 render "$OPUS"
+has   "narrow tier keeps ⟲" "/⟲400k"
+render "$OPUS | .context_window.current_usage=null"
+hasnt "no current_usage (cumulative totals only): no rescale" "⟲"
+render "$OPUS" CLAUDE_CODE_AUTO_COMPACT_WINDOW=200k
+has   "env CLAUDE_CODE_AUTO_COMPACT_WINDOW beats settings" "50% 100k/⟲200k"
+render "$OPUS" CLAUDE_CODE_AUTO_COMPACT_WINDOW=50000
+has   "env value below 100k is clamped like CC" "/⟲100k"
+render "$OPUS" CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50
+has   "PCT override lowers the trigger point" "/⟲200k"
+render "$OPUS" DISABLE_AUTO_COMPACT=1
+hasnt "DISABLE_AUTO_COMPACT=1: no rescale" "⟲"
+render "$OPUS" DISABLE_COMPACT=1
+hasnt "DISABLE_COMPACT=1: no rescale" "⟲"
+render "$OPUS" CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=08
+has   "PCT override with leading zero is decimal, not octal" "/⟲32k"
+quiet "PCT override with leading zero: no stderr"
+# Project file sets top-level only: it is the highest-priority file setting either key, so it decides.
+ACP="$SANDBOX/acproj"; mkdir -p "$ACP/.claude"
+echo '{"autoCompactWindow": 327000}' > "$ACP/.claude/settings.json"
+render "$OPUS | .cwd=\"$ACP\" | .workspace.current_dir=\"$ACP\" | .workspace.project_dir=\"$ACP\""
+has   "project top-level beats user per-model (highest file decides)" "/⟲327k"
+render ".cwd=\"$ACP\" | .workspace.current_dir=\"$ACP\" | .workspace.project_dir=\"$ACP\""
+has   "top-level fallback for a model without per-model entry" "/⟲327k"
+ACS="$SANDBOX/acsame"; mkdir -p "$ACS/.claude"
+echo '{"autoCompactWindow": 327000, "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 250000}}}' > "$ACS/.claude/settings.json"
+render "$OPUS | .cwd=\"$ACS\" | .workspace.current_dir=\"$ACS\" | .workspace.project_dir=\"$ACS\""
+has   "per-model beats top-level in the same file" "/⟲250k"
+# Fresh dir: settings are cached per cwd+model for SETTINGS_CACHE_TTL.
+ACO="$SANDBOX/acoff"; mkdir -p "$ACO/.claude"
+echo '{"autoCompactWindow": 327000, "autoCompactEnabled": false}' > "$ACO/.claude/settings.json"
+render ".cwd=\"$ACO\" | .workspace.current_dir=\"$ACO\" | .workspace.project_dir=\"$ACO\""
+hasnt "autoCompactEnabled:false: no rescale" "⟲"
+TERM_WIDTH_OVERRIDE=100 render "$OPUS"
+maxw=$(awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
+(( maxw <= 100 )) && ok "rescaled tail fits at 100 cols (max $maxw)" || bad "rescaled tail fits at 100 cols" "max line = $maxw"
+
 echo "── width ──"
 TERM_WIDTH_OVERRIDE=60 render '.'
 nlines "narrow tier forces a single line" 1
@@ -331,10 +381,11 @@ none() { [[ ! -e "$2" ]] && ok "$1" || bad "$1" "$2 exists"; }
 
 # 1. Planted cache files carrying shell syntax must never execute.
 C1="$SEC/c1"; mkdir -p "$C1"; chmod 700 "$C1"
-sec_render "$C1"                                   # warm: creates settings2-*, git2-*
+sec_render "$C1"                                   # warm: creates settings3-*, git2-*
 EV="\$(touch $SEC/pwn-settings)"
-for f in "$C1"/settings2-*; do
-    printf 'SETTINGS_EFFORT_LEVEL=%s\nSETTINGS_ADVISOR_MODEL=a[%s]\nBOGUS=%s\n' "$EV" "$EV" "$EV" > "$f"
+for f in "$C1"/settings3-*; do
+    [[ -e "$f" ]] || { bad "settings cache file exists to plant" "no $C1/settings3-*"; continue; }
+    printf 'SETTINGS_EFFORT_LEVEL=%s\nSETTINGS_ADVISOR_MODEL=a[%s]\nSETTINGS_COMPACT_WINDOW=a[%s]\nBOGUS=%s\n' "$EV" "$EV" "$EV" "$EV" > "$f"
 done
 sec_render "$C1"
 none "planted settings cache is not executed" "$SEC/pwn-settings"
@@ -354,10 +405,10 @@ none "planted width cache is not evaluated" "$SEC/pwn-width"
 C2="$SEC/c2"; mkdir -p "$C2"; chmod 700 "$C2"
 VICTIM="$SEC/victim"; printf 'precious' > "$VICTIM"
 sec_render "$C2"
-for f in "$C2"/settings2-* "$C2"/git2-*; do rm -f "$f"; ln -s "$VICTIM" "$f"; done
+for f in "$C2"/settings3-* "$C2"/git2-*; do rm -f "$f"; ln -s "$VICTIM" "$f"; done
 sec_render "$C2"
 [[ "$(cat "$VICTIM")" == "precious" ]] && ok "symlink at cache path: target untouched" || bad "symlink at cache path: target untouched" "victim = $(cat "$VICTIM")"
-n=0; for f in "$C2"/settings2-* "$C2"/git2-*; do [[ -L "$f" ]] && n=$((n+1)); done
+n=0; for f in "$C2"/settings3-* "$C2"/git2-*; do [[ -L "$f" ]] && n=$((n+1)); done
 (( n == 0 )) && ok "symlinks at cache paths are replaced by regular files" || bad "symlinks at cache paths are replaced by regular files" "$n symlinks left"
 has  "renders normally after symlink replaced" "◉ xhigh"
 

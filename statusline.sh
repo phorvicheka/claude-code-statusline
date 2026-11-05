@@ -211,6 +211,7 @@ eval "$(printf '%s' "$INPUT" | jq -r '
   "CC_VERSION=" + (g(.version) | q),
   "CTX_SIZE=" + (g(.context_window.context_window_size) | num("0")),
   "USED_PCT=" + (g(.context_window.used_percentage) | num("0")),
+  "HAS_CURRENT_USAGE=" + ((g(.context_window.current_usage) | type == "object") | tostring),
   "INPUT_TOKENS=" + (
     if (g(.context_window.current_usage) | type) == "object" then
       ((g(.context_window.current_usage.input_tokens) | num("0") | tonumber)
@@ -263,6 +264,7 @@ eval "$(printf '%s' "$INPUT" | jq -r '
 : "${EFFORT_LEVEL_JSON:=}" "${MODERN_SCHEMA:=false}" "${WS_MODERN:=false}" "${TRANSCRIPT_PATH:=}"
 : "${FAST_MODE:=false}" "${GIT_WORKTREE_JSON:=}" "${REPO_HOST:=}" "${REPO_OWNER:=}" "${REPO_NAME:=}"
 : "${PR_NUMBER:=}" "${PR_URL:=}" "${PR_STATE:=}" "${PR_KIND:=}"
+: "${HAS_CURRENT_USAGE:=false}"
 : "${PC_PRESENT:=false}" "${PC_OBSERVED:=false}" "${PC_WARM:=false}" "${PC_EXPIRES:=}" "${PC_HIT:=}"
 # Anything that ends up in a bash arithmetic context must be a plain number.
 for _v in CTX_SIZE INPUT_TOKENS LINES_ADDED LINES_REMOVED TOTAL_DURATION_MS; do
@@ -395,6 +397,12 @@ SETTINGS_EFFORT_MODEL=""   # modelSettings.<model-id>.effortLevel (beats top-lev
 SETTINGS_EFFORT_ENV=""
 SETTINGS_OUTPUT_STYLE=""
 SETTINGS_ADVISOR_MODEL=""
+# Auto-compact (raw strings; validated in _resolve_compact_at, never trusted as numbers here).
+SETTINGS_COMPACT_WINDOW=""   # from the highest-priority file setting modelSettings.<id> or top-level autoCompactWindow
+SETTINGS_COMPACT_ENABLED=""  # autoCompactEnabled
+SETTINGS_COMPACT_ENV=""      # env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+SETTINGS_COMPACT_OFF_ENV=""  # env.DISABLE_AUTO_COMPACT / env.DISABLE_COMPACT
+SETTINGS_COMPACT_PCT_ENV=""  # env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 
 # The cache file is plain KEY=value lines and is read back through a whitelist:
 # it is never `source`d / eval'd, and values lose control characters.
@@ -403,7 +411,8 @@ _read_settings_cache() {
     # `|| [[ -n $k ]]`: the last line has no trailing newline ($(...) strips it).
     while IFS='=' read -r k v || [[ -n "$k" ]]; do
         case "$k" in
-            SETTINGS_THINKING|SETTINGS_EFFORT_LEVEL|SETTINGS_EFFORT_MODEL|SETTINGS_EFFORT_ENV|SETTINGS_OUTPUT_STYLE|SETTINGS_ADVISOR_MODEL)
+            SETTINGS_THINKING|SETTINGS_EFFORT_LEVEL|SETTINGS_EFFORT_MODEL|SETTINGS_EFFORT_ENV|SETTINGS_OUTPUT_STYLE|SETTINGS_ADVISOR_MODEL|\
+            SETTINGS_COMPACT_WINDOW|SETTINGS_COMPACT_ENABLED|SETTINGS_COMPACT_ENV|SETTINGS_COMPACT_OFF_ENV|SETTINGS_COMPACT_PCT_ENV)
                 printf -v "$k" '%s' "${v//[[:cntrl:]]/}" ;;
         esac
     done < "$1" 2>/dev/null
@@ -411,13 +420,13 @@ _read_settings_cache() {
 
 _load_settings() {
     # Key by cwd + model: the per-model effort lookup depends on the model id.
-    # "settings2-" prefix: older "settings-*" files lack SETTINGS_EFFORT_MODEL.
+    # "settings3-" prefix: older "settings-*"/"settings2-*" files lack newer keys.
     local model_key="${MODEL_ID%%\[*}"   # claude-sonnet-5-5[1m] -> claude-sonnet-5-5 (assumed to match CC's key)
     local cache_file=""
     if [[ -n "$CACHE_ROOT" ]]; then
         local cwd_hash
         cwd_hash=$(printf '%s|%s' "${CWD:-_}" "$model_key" | cksum | awk '{print $1}')
-        cache_file="${CACHE_ROOT}/settings2-${cwd_hash}"
+        cache_file="${CACHE_ROOT}/settings3-${cwd_hash}"
         if (( $(_cache_age "$cache_file") < SETTINGS_CACHE_TTL )); then
             _read_settings_cache "$cache_file"
             return 0
@@ -425,6 +434,7 @@ _load_settings() {
     fi
 
     local thinking="" effort_level="" effort_model="" effort_env="" output_style="" advisor_model=""
+    local compact_window="" compact_enabled="" compact_env="" compact_off_env="" compact_pct_env=""
     local f parsed k v
     for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
               "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
@@ -436,7 +446,15 @@ _load_settings() {
             "EM=" + (try ((.modelSettings // {})[$m].effortLevel // "") catch ""),
             "EV=" + (.env.CLAUDE_CODE_EFFORT_LEVEL // ""),
             "O=" + (if has("outputStyle") then .outputStyle else "" end),
-            "A=" + (if has("advisorModel") then .advisorModel else "" end)
+            "A=" + (if has("advisorModel") then .advisorModel else "" end),
+            # Per docs, the highest-priority file that sets either key decides; per-model wins inside it.
+            # A per-model "auto" decides too (= the CC tuned default), so the display stays unchanged.
+            "CW=" + (((try (.modelSettings[$m].autoCompactWindow) catch null) // (try .autoCompactWindow catch null) // "") | tostring),
+            "CE=" + (if has("autoCompactEnabled") then (.autoCompactEnabled | tostring) else "" end),
+            "CV=" + (try (.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW // "" | tostring) catch ""),
+            # Either variable set to 1/true disables; "0" in one must not mask the other.
+            "CD=" + (try ([.env.DISABLE_AUTO_COMPACT, .env.DISABLE_COMPACT] | map(tostring) | if any(. == "1" or . == "true") then "1" else "" end) catch ""),
+            "CP=" + (try (.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE // "" | tostring) catch "")
         ' "$f" 2>/dev/null) || continue
         while IFS='=' read -r k v; do
             v="${v//[[:cntrl:]]/}"
@@ -447,20 +465,64 @@ _load_settings() {
                 EV) [[ -z "$effort_env"    && -n "$v" ]] && effort_env="$v" ;;
                 O)  [[ -z "$output_style"  && -n "$v" ]] && output_style="$v" ;;
                 A)  [[ -z "$advisor_model" && -n "$v" ]] && advisor_model="$v" ;;
+                CW) [[ -z "$compact_window"  && -n "$v" ]] && compact_window="$v" ;;
+                CE) [[ -z "$compact_enabled" && -n "$v" ]] && compact_enabled="$v" ;;
+                CV) [[ -z "$compact_env"     && -n "$v" ]] && compact_env="$v" ;;
+                CD) [[ -z "$compact_off_env" && -n "$v" ]] && compact_off_env="$v" ;;
+                CP) [[ -z "$compact_pct_env" && -n "$v" ]] && compact_pct_env="$v" ;;
             esac
         done <<< "$parsed"
     done
     SETTINGS_THINKING="$thinking"; SETTINGS_EFFORT_LEVEL="$effort_level"
     SETTINGS_EFFORT_MODEL="$effort_model"; SETTINGS_EFFORT_ENV="$effort_env"
     SETTINGS_OUTPUT_STYLE="$output_style"; SETTINGS_ADVISOR_MODEL="$advisor_model"
+    SETTINGS_COMPACT_WINDOW="$compact_window"; SETTINGS_COMPACT_ENABLED="$compact_enabled"
+    SETTINGS_COMPACT_ENV="$compact_env"; SETTINGS_COMPACT_OFF_ENV="$compact_off_env"
+    SETTINGS_COMPACT_PCT_ENV="$compact_pct_env"
 
     [[ -n "$cache_file" ]] && _cache_write "$cache_file" "$(
         printf 'SETTINGS_THINKING=%s\nSETTINGS_EFFORT_LEVEL=%s\nSETTINGS_EFFORT_MODEL=%s\n' "$thinking" "$effort_level" "$effort_model"
         printf 'SETTINGS_EFFORT_ENV=%s\nSETTINGS_OUTPUT_STYLE=%s\nSETTINGS_ADVISOR_MODEL=%s\n' "$effort_env" "$output_style" "$advisor_model"
+        printf 'SETTINGS_COMPACT_WINDOW=%s\nSETTINGS_COMPACT_ENABLED=%s\nSETTINGS_COMPACT_ENV=%s\n' "$compact_window" "$compact_enabled" "$compact_env"
+        printf 'SETTINGS_COMPACT_OFF_ENV=%s\nSETTINGS_COMPACT_PCT_ENV=%s\n' "$compact_off_env" "$compact_pct_env"
     )"
     return 0
 }
 _load_settings
+
+# Effective auto-compact limit in tokens, or "" when the display should stay as before
+# (unset / "auto" / disabled / not below the model window / no live usage).
+# Order per Claude Code docs: env CLAUDE_CODE_AUTO_COMPACT_WINDOW beats settings files;
+# DISABLE_AUTO_COMPACT / DISABLE_COMPACT / autoCompactEnabled:false turn it off.
+# shortcut: managed settings and the --autocompact flag are not read; add if someone uses them.
+_parse_tokens() {   # 400000 | 400k | 1M -> digits on stdout; anything else -> nothing
+    [[ "$1" =~ ^([0-9]{1,7})([kKmM]?)$ ]] || return 1
+    local n=$(( 10#${BASH_REMATCH[1]} ))
+    case "${BASH_REMATCH[2]}" in k|K) n=$(( n * 1000 )) ;; m|M) n=$(( n * 1000000 )) ;; esac
+    printf '%s' "$n"
+}
+_resolve_compact_at() {
+    local off
+    for off in "${DISABLE_AUTO_COMPACT:-}" "${DISABLE_COMPACT:-}" "$SETTINGS_COMPACT_OFF_ENV"; do
+        [[ "$off" == "1" || "$off" == "true" ]] && return
+    done
+    [[ "$SETTINGS_COMPACT_ENABLED" == "false" ]] && return
+    # current_usage absent -> INPUT_TOKENS is cumulative total_input_tokens, not context size.
+    [[ "$HAS_CURRENT_USAGE" == "true" ]] || return
+    local n
+    n=$(_parse_tokens "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-$SETTINGS_COMPACT_ENV}") \
+        || n=$(_parse_tokens "$SETTINGS_COMPACT_WINDOW") || return
+    (( n < 100000 )) && n=100000      # CC clamps to [100k, 1M]
+    (( n > 1000000 )) && n=1000000
+    local pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-$SETTINGS_COMPACT_PCT_ENV}"
+    if [[ "$pct" =~ ^[0-9]{1,3}$ ]]; then
+        pct=$(( 10#$pct ))   # "08" is not octal
+        (( pct >= 1 && pct < 100 )) && n=$(( n * pct / 100 ))
+    fi
+    (( CTX_SIZE > 0 && n < CTX_SIZE )) || return
+    printf '%s' "$n"
+}
+COMPACT_AT=$(_resolve_compact_at)
 
 # ===========================================================================
 # Terminal width detection
@@ -574,7 +636,11 @@ esac
 # Fixed L1 overhead ≈ 70 chars (model + seps + tokens + git-prefix + dirty-indicator),
 # +2 while the ⚡ fast-mode badge is shown.
 _l1_overhead=70
-[[ "$FAST_MODE" == "true" ]] && _l1_overhead=72
+[[ "$FAST_MODE" == "true" ]] && _l1_overhead=$(( _l1_overhead + 2 ))
+# "/⟲400k · 1.0m max" vs "/1.0m": +12 on the tiers that show the tail, +1 otherwise.
+if [[ -n "$COMPACT_AT" ]]; then
+    case "$TIER" in full|wide) _l1_overhead=$(( _l1_overhead + 12 )) ;; *) _l1_overhead=$(( _l1_overhead + 1 )) ;; esac
+fi
 _folder_max=$(( TERM_WIDTH - _l1_overhead - _branch_max ))
 (( _folder_max < 10 )) && _folder_max=10
 
@@ -993,8 +1059,16 @@ render_tokens() {
     bar=$(build_bar "$pct_int" "$_token_bar")
     used_fmt=$(fmt_tokens "$INPUT_TOKENS")
     max_fmt=$(fmt_tokens "$CTX_SIZE")
+    local limit_txt="${C_DIM}/${max_fmt}${C_RESET}"
+    if [[ -n "$COMPACT_AT" ]]; then
+        # Rescaled to the auto-compact limit: ⟲ must always show, or "/400k" reads as the model window.
+        pct_int=$(( INPUT_TOKENS * 100 / COMPACT_AT ))
+        bar=$(build_bar "$pct_int" "$_token_bar")
+        limit_txt="${C_DIM}/${C_RESET}${C_WHITE}⟲$(fmt_tokens "$COMPACT_AT")${C_RESET}"
+        [[ "$TIER" == "full" || "$TIER" == "wide" ]] && limit_txt+="${C_DIM} · ${max_fmt} max${C_RESET}"
+    fi
     pct_c=$(pct_color "$pct_int")
-    local out="${bar} ${pct_c}${pct_int}%${C_RESET} ${C_WHITE}${used_fmt}${C_DIM}/${max_fmt}${C_RESET}"
+    local out="${bar} ${pct_c}${pct_int}%${C_RESET} ${C_WHITE}${used_fmt}${C_RESET}${limit_txt}"
     # Use ⚠️ (U+26A0 + U+FE0F variation selector) for emoji presentation.
     # Bare ⚠ falls back to text presentation and renders as a missing glyph
     # in many Windows fonts (e.g., Git Bash default Lucida Console).
