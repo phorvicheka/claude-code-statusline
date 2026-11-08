@@ -139,6 +139,16 @@ fi
 
 ok "Installed statusline.sh to ${TARGET}"
 
+# The line mode lives in ~/.claude/statusline.conf, which overrides the script default above.
+# Record an explicit choice there; a plain -y update keeps whatever the user saved.
+if [[ -n "$LINES_ARG" || "$AUTO_YES" != true ]]; then
+    if HOME="$HOME" bash "$TARGET" --lines "$line_choice" >/dev/null; then
+        ok "Saved ${line_choice}-line mode to ${CLAUDE_DIR}/statusline.conf"
+    else
+        warn "Could not save the line mode to ${CLAUDE_DIR}/statusline.conf"
+    fi
+fi
+
 # Path written into settings.json. On Windows, Claude Code runs the command through Git Bash and the docs
 # ask for forward-slash Windows paths (C:/Users/...), not MSYS paths (/c/Users/...).
 CMD_TARGET="$TARGET"

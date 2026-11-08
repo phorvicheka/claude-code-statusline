@@ -13,6 +13,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `adaptive-statusline`. Skills `/adaptive-statusline:install` and `:uninstall` run the bundled scripts, because plugins
   cannot set `statusLine`. The script still lands at `~/.claude/statusline.sh`, since the plugin directory changes
   on every update.
+- **Hide sections with one command; settings survive updates.** `bash ~/.claude/statusline.sh --hide cost,rate-limits`
+  (also `--show`, `--lines`, `--list`, `--reset`) writes `~/.claude/statusline.conf`, which reinstalls and plugin
+  updates never touch. Before, hiding meant editing `SHOW_*` lines in the installed script, and every update erased
+  them. The file is parsed strictly, never sourced. The plugin skill `/adaptive-statusline:configure` runs these
+  commands, and Claude also picks it for plain requests ("hide the cost section of my statusline").
 - `install.sh -l 1|2|3` picks the line mode without a prompt. `uninstall.sh -y` runs without a prompt and restores
   the newest backup. Both are needed where there is no TTY, such as Claude's Bash tool.
 
@@ -39,8 +44,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `bash tests/ci.sh --fresh` runs the same check locally on a fresh clone of HEAD.
 - `tests/run.sh`: `SUT_BASH` picks the interpreter for the shipped scripts; a static portability lint; BSD `stat`
   and macOS locale fallbacks; Windows-only SKIPs (symlinks, POSIX modes) are counted and printed, never passed.
-- **README screenshot re-rendered** from the current `statusline.sh` (Opus 5.5, v2.1.319, 3-line layout, PR badge,
-  5h/7d bars, prompt cache, settings and output groups). The old one showed the April layout (Sonnet 4.6, v2.1.97).
+- **README screenshot re-rendered** from the current `statusline.sh` (Opus 5.5, v2.1.319, 3-line layout, auto-compact
+  limit `⟲400k`, PR badge, 5h/7d bars, prompt cache, settings and output groups). The old one showed the April layout (Sonnet 4.6, v2.1.97).
 - Requirements: bash 3.2+ (was 4+); `gh` dropped from the list (the PR badge uses Claude Code's JSON).
 - `.claude/settings.local.json` and `.codex` are no longer tracked; `.gitignore` added (also ignores `.tmp/`).
   Before, a personal permission allowlist was copied into every plugin install.

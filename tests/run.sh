@@ -459,6 +459,37 @@ else
     hasnt "symlinked repo path: no worktree row" "wt: name:"
 fi
 
+echo "── settings file + CLI (--hide/--show/--lines/--reset) ──"
+cli() { HOME="$HOME" "$SUT_BASH" "$SCRIPT" "$@" </dev/null >/dev/null 2>&1; }
+CONF="$HOME/.claude/statusline.conf"
+cli --hide cost,pr
+render '.pr={number:4,url:"u",review_state:"approved"}'
+hasnt "--hide cost: cost group gone" "cost:"
+hasnt "--hide pr: PR badge gone" "PR #4"
+has   "--hide: other sections stay" "5h "
+cli --show pr
+render '.pr={number:4,url:"u",review_state:"approved"}'
+has   "--show pr: PR badge back" "PR #4"
+hasnt "--show pr: cost still hidden" "cost:"
+cli --hide cost
+[[ "$(grep -c '^SHOW_COST_GROUP=false$' "$CONF")" == 1 ]] && ok "re-hide does not duplicate" || bad "re-hide does not duplicate" "$(cat "$CONF")"
+cli --lines 1; render '.'
+nlines "--lines 1 gives one row" 1
+render '.' STATUSLINE_LINES=3
+nlines "env STATUSLINE_LINES beats the settings file" 3
+cli --hide bogus && bad "unknown section rejected" "exit 0" || ok "unknown section rejected"
+cli --lines 7 && bad "--lines 7 rejected" "exit 0" || ok "--lines 7 rejected"
+cli --reset; render '.'
+has   "--reset: cost back" "cost:"
+nlines "--reset: default 3 rows" 3
+printf 'SHOW_COST_GROUP=$(touch %s/pwn-conf)\nSTATUSLINE_LINES=1;touch %s/pwn-conf\nPATH=/nowhere\nSHOW_NOPE=false\nSHOW_PR=false\r\n' "$SANDBOX" "$SANDBOX" > "$CONF"
+render '.pr={number:4,url:"u",review_state:"approved"}'
+none  "hostile settings file is not executed" "$SANDBOX/pwn-conf"
+has   "hostile settings file: still renders" "cost:"
+hasnt "CRLF settings line still applies" "PR #4"
+nlines "invalid STATUSLINE_LINES ignored" 3
+rm -f "$CONF"
+
 echo "── custom output style label is lowercased (portable _lower, no \${x,,}) ──"
 render '.output_style.name="My-Custom_Style2"'
 has   "custom output style lowercased" "my-custom_style2"
@@ -500,6 +531,8 @@ uninst -y
 none "uninstall after updates removes the script" "$IH/.claude/statusline.sh"
 [[ "$(nbak)" == 0 ]] && ok "uninstall drops backups of our own script" || bad "uninstall drops backups of our own script" "$(nbak) left"
 
+fresh keep; inst -y -l 2; inst -y
+grep -q '^STATUSLINE_LINES=2$' "$IH/.claude/statusline.conf" 2>/dev/null && ok "update without -l keeps saved line mode" || bad "update without -l keeps saved line mode" "$(cat "$IH/.claude/statusline.conf" 2>&1)"
 fresh foreign; printf '#!/bin/sh\necho mine\n' > "$IH/.claude/statusline.sh"; inst -y; sleep 1; inst -y
 [[ "$(nbak)" == 1 ]] && ok "foreign script is backed up once" || bad "foreign script is backed up once" "$(nbak) backups"
 uninst -y

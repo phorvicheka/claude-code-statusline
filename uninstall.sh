@@ -77,4 +77,5 @@ done
 echo ""
 printf "${GREEN}Uninstall complete.${RESET}\n"
 echo "Note: statusLine config in settings.json was left intact."
+[[ -f "${CLAUDE_DIR}/statusline.conf" ]] && echo "Note: your section settings in ${CLAUDE_DIR}/statusline.conf were kept."
 echo "Remove it manually if needed: jq 'del(.statusLine)' ~/.claude/settings.json"

@@ -15,6 +15,7 @@ shopt -s extglob  # used by _vis_len to strip ANSI sequences without forking
 # ===========================================================================
 
 # ── Line count (override via env: STATUSLINE_LINES=3 claude) ──
+_SL_LINES_ENV="${STATUSLINE_LINES:+1}"   # env beats statusline.conf
 STATUSLINE_LINES="${STATUSLINE_LINES:-3}"  # 1, 2, or 3
 
 # ── Feature toggles (set false to hide any element) ──
@@ -41,6 +42,120 @@ SHOW_CACHE=true      # prompt-cache warm/cold badge (L2, wide+ tiers only)
 SHOW_SPEND=true      # gateway spend-limit meter (L2, only when present)
 SHOW_CWD_PATH=true   # user@host:~/path on the host row (deduped vs worktree path)
 SHOW_CLICKABLE_LINKS=true
+
+# ── User settings file: survives reinstalls and plugin updates ──
+# Written by `statusline.sh --hide/--show/--lines/--reset` (and the plugin's configure skill).
+# Parsed strictly, never sourced: only SHOW_<known>=true|false and STATUSLINE_LINES=1|2|3 apply.
+STATUSLINE_CONF="${STATUSLINE_CONF:-${HOME}/.claude/statusline.conf}"
+# section name = SHOW_* flag suffix
+_SECTIONS="model=MODEL tokens=TOKENS git=GIT folder=FOLDER thinking=THINKING effort=EFFORT
+output-style=OUTPUT_STYLE caveman=CAVEMAN agent=AGENT advisor=ADVISOR vim-mode=VIM_MODE version=VERSION
+session-id=SESSION_ID session-name=SESSION_NAME cost=COST_GROUP rate-limits=RATE_LIMITS worktree=WORKTREE
+pr=PR fast=FAST cache=CACHE spend=SPEND cwd-path=CWD_PATH clickable-links=CLICKABLE_LINKS"
+
+_flag_of() {  # _flag_of <section> → sets _FLAG=SHOW_*, fails on an unknown name
+    local pair
+    for pair in $_SECTIONS; do
+        [[ "${pair%%=*}" == "$1" ]] && { _FLAG="SHOW_${pair#*=}"; return 0; }
+    done
+    return 1
+}
+_is_flag() {  # _is_flag <SHOW_*>: one of ours?
+    local pair
+    for pair in $_SECTIONS; do [[ "SHOW_${pair#*=}" == "$1" ]] && return 0; done
+    return 1
+}
+
+# Reads the file into _CONF_LINES and _CONF_HIDDEN (section names).
+_conf_read() {
+    _CONF_LINES=""; _CONF_HIDDEN=""
+    [[ -f "$STATUSLINE_CONF" && -r "$STATUSLINE_CONF" ]] || return 0
+    local k v pair
+    while IFS='=' read -r k v || [[ -n "$k" ]]; do
+        v="${v%$'\r'}"
+        case "$k" in
+            STATUSLINE_LINES) [[ "$v" =~ ^[123]$ ]] && _CONF_LINES="$v" ;;
+            SHOW_*)
+                [[ "$v" == false ]] || continue
+                for pair in $_SECTIONS; do
+                    [[ "SHOW_${pair#*=}" == "$k" ]] && _CONF_HIDDEN="$_CONF_HIDDEN ${pair%%=*}"
+                done ;;
+        esac
+    done < "$STATUSLINE_CONF"
+}
+
+_conf_read
+[[ -z "$_SL_LINES_ENV" && -n "$_CONF_LINES" ]] && STATUSLINE_LINES="$_CONF_LINES"
+for _sec in $_CONF_HIDDEN; do _flag_of "$_sec" && printf -v "$_FLAG" '%s' false; done
+unset _sec
+
+_conf_write() {
+    local dir tmp sec
+    dir="$(dirname -- "$STATUSLINE_CONF")"
+    mkdir -p -- "$dir" || return 1
+    tmp="$(mktemp "${STATUSLINE_CONF}.XXXXXX")" || return 1
+    {
+        echo "# Claude Code statusline settings. Change with: bash ~/.claude/statusline.sh --hide/--show/--lines/--reset"
+        [[ -n "$_CONF_LINES" ]] && echo "STATUSLINE_LINES=$_CONF_LINES"
+        for sec in $_CONF_HIDDEN; do _flag_of "$sec" && echo "${_FLAG}=false"; done
+    } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    # cat > (not mv) keeps a symlinked conf pointing where the user put it
+    cat -- "$tmp" > "$STATUSLINE_CONF" || { rm -f -- "$tmp"; return 1; }
+    rm -f -- "$tmp"
+}
+
+_conf_usage() {
+    cat <<'USAGE'
+Usage: bash ~/.claude/statusline.sh <command>
+  --hide <sections>   hide sections (comma or space separated), e.g. --hide cost,rate-limits
+  --show <sections>   show them again
+  --lines <1|2|3>     set the line mode
+  --list              show every section and whether it is on
+  --reset             show everything, default line mode
+Settings live in ~/.claude/statusline.conf (STATUSLINE_CONF to move it) and survive updates.
+USAGE
+    printf 'Sections: %s\n' "$(for p in $_SECTIONS; do printf '%s ' "${p%%=*}"; done)"
+}
+
+_conf_cli() {
+    local cmd="$1"; shift
+    local arg sec names="" bad="" keep
+    for arg in "$@"; do names="$names ${arg//,/ }"; done
+    case "$cmd" in
+        --hide|--show)
+            [[ -n "${names// /}" ]] || { echo "statusline: $cmd needs at least one section" >&2; _conf_usage >&2; return 2; }
+            for sec in $names; do _flag_of "$sec" || bad="$bad $sec"; done
+            [[ -z "$bad" ]] || { echo "statusline: unknown section(s):$bad" >&2; _conf_usage >&2; return 2; }
+            keep=""
+            for sec in $_CONF_HIDDEN; do
+                case " $names " in *" $sec "*) ;; *) keep="$keep $sec" ;; esac
+            done
+            [[ "$cmd" == --hide ]] && keep="$keep $names"
+            _CONF_HIDDEN="$keep"
+            _conf_write || { echo "statusline: cannot write $STATUSLINE_CONF" >&2; return 1; }
+            echo "${cmd#--}:$names  (saved to $STATUSLINE_CONF)" ;;
+        --lines)
+            [[ "${1:-}" =~ ^[123]$ ]] || { echo "statusline: --lines takes 1, 2 or 3" >&2; return 2; }
+            _CONF_LINES="$1"
+            _conf_write || { echo "statusline: cannot write $STATUSLINE_CONF" >&2; return 1; }
+            echo "lines: $1  (saved to $STATUSLINE_CONF)" ;;
+        --reset)
+            _CONF_LINES=""; _CONF_HIDDEN=""
+            _conf_write || { echo "statusline: cannot write $STATUSLINE_CONF" >&2; return 1; }
+            echo "reset: all sections shown, default line mode" ;;
+        --list)
+            echo "lines: $STATUSLINE_LINES"
+            for arg in $_SECTIONS; do
+                sec="${arg%%=*}"; _FLAG="SHOW_${arg#*=}"
+                if [[ "${!_FLAG}" == true ]]; then printf '  %-16s on\n' "$sec"; else printf '  %-16s OFF\n' "$sec"; fi
+            done ;;
+        *) _conf_usage ;;
+    esac
+}
+
+case "${1:-}" in
+    --hide|--show|--lines|--reset|--list|--help|-h) _conf_cli "$@"; exit $? ;;
+esac
 
 # Auto-detect terminals that do NOT support OSC 8 clickable links.
 # WSL default console (conhost.exe), plain xterm, and most SSH sessions

@@ -4,7 +4,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ![Claude Code Statusline screenshot](docs/screenshot.png)
 
-<sub>3-line mode at 150 columns, rendered by `statusline.sh` from a sample Claude Code payload.</sub>
+<sub>3-line mode at 150 columns with a 400k auto-compact limit (`⟲400k`), rendered by `statusline.sh` from a sample Claude Code payload.</sub>
 
 ## What You Get
 
@@ -37,7 +37,7 @@ In Claude Code:
 Plugins cannot set `statusLine` themselves, so `/adaptive-statusline:install` runs `install.sh`. It asks for the line
 mode, asks before replacing another tool's statusline, and copies the script to `~/.claude/statusline.sh`.
 After `/plugin update`, run `/adaptive-statusline:install` again: the installed copy does not update itself.
-`/adaptive-statusline:uninstall` removes it.
+`/adaptive-statusline:configure` hides or shows sections (or just ask Claude), and `/adaptive-statusline:uninstall` removes it.
 
 ### Setup via Claude Code Prompt
 
@@ -50,15 +50,25 @@ Please check https://github.com/phorvicheka/claude-code-statusline, read the REA
 > **Already have the repo locally?** Use:
 > `Please read the README.md in this directory and follow the install steps.`
 
-**Customize elements** -- toggle visibility of any statusline element:
+**Hide or show sections**: ask Claude in plain words, or run the command yourself. Settings are saved to
+`~/.claude/statusline.conf`, so reinstalls and plugin updates keep them.
 
 ```
-In my Claude Code statusline at ~/.claude/statusline.sh, set SHOW_<ELEMENT>=false for: <elements to hide>. Leave all others as true. The toggle flags are at the top of the file.
+hide the cost and rate limit parts of my statusline        # plain request (plugin installed)
+/adaptive-statusline:configure hide cost,rate-limits       # the same, as a slash command
 ```
 
-> Example: `...set SHOW_COST_GROUP=false and SHOW_OUTPUT_STYLE=false for: cost group, output style...`
->
-> Available elements: `MODEL`, `TOKENS`, `GIT`, `FOLDER`, `THINKING`, `EFFORT`, `OUTPUT_STYLE`, `CAVEMAN`, `AGENT`, `ADVISOR`, `VIM_MODE`, `VERSION`, `SESSION_ID`, `SESSION_NAME`, `COST_GROUP`, `RATE_LIMITS`, `WORKTREE`, `PR`, `FAST`, `CACHE`, `SPEND`, `CWD_PATH`, `CLICKABLE_LINKS`
+```bash
+bash ~/.claude/statusline.sh --hide cost,rate-limits   # hide
+bash ~/.claude/statusline.sh --show cost               # show again
+bash ~/.claude/statusline.sh --lines 2                 # 1, 2 or 3 lines
+bash ~/.claude/statusline.sh --list                    # what is on or off
+bash ~/.claude/statusline.sh --reset                   # everything back
+```
+
+> Sections: `model`, `tokens`, `git`, `folder`, `thinking`, `effort`, `output-style`, `caveman`, `agent`,
+> `advisor`, `vim-mode`, `version`, `session-id`, `session-name`, `cost`, `rate-limits`, `worktree`, `pr`, `fast`,
+> `cache`, `spend`, `cwd-path`, `clickable-links`. Changes show on the next refresh; no restart needed.
 
 **Uninstall**:
 
@@ -141,7 +151,7 @@ Claude Code may send working directory paths with backslashes on Windows. The st
 
 ## Configuration
 
-See [Configuration Guide](docs/configuration.md) for line count, feature toggles, sizing, and width tiers.
+Hide sections and set the line mode with `bash ~/.claude/statusline.sh --hide/--show/--lines` (see [Quick Install](#quick-install)). See the [Configuration Guide](docs/configuration.md) for the settings file, sizing and width tiers.
 
 ## Statusline Anatomy
 

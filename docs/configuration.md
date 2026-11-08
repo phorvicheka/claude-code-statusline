@@ -1,59 +1,65 @@
 # Configuration
 
-All configuration is done by editing the top of `~/.claude/statusline.sh`.
+Day-to-day settings (which sections show, how many lines) live in `~/.claude/statusline.conf`. Reinstalls and plugin
+updates replace `~/.claude/statusline.sh` but never touch this file. Don't edit the script's `SHOW_*` lines for
+this: an update would undo it.
+
+## Hide or Show Sections
+
+```bash
+bash ~/.claude/statusline.sh --hide cost,rate-limits   # comma or space separated
+bash ~/.claude/statusline.sh --show cost
+bash ~/.claude/statusline.sh --list
+bash ~/.claude/statusline.sh --reset
+```
+
+With the plugin installed, ask Claude ("hide the cost section of my statusline") or run
+`/adaptive-statusline:configure hide cost`. Both run the commands above.
+
+| Section | Hides | Flag in the file |
+|---------|-------|------------------|
+| `model` | model name | `SHOW_MODEL` |
+| `tokens` | context bar and token counts | `SHOW_TOKENS` |
+| `git` | branch, dirty state, ahead/behind | `SHOW_GIT` |
+| `folder` | folder name on L1 | `SHOW_FOLDER` |
+| `thinking` | thinking + effort block | `SHOW_THINKING` |
+| `effort` | effort level | `SHOW_EFFORT` |
+| `output-style` | output style | `SHOW_OUTPUT_STYLE` |
+| `caveman` | caveman mode badge | `SHOW_CAVEMAN` |
+| `agent` | agent name | `SHOW_AGENT` |
+| `advisor` | advisor model | `SHOW_ADVISOR` |
+| `vim-mode` | vim mode | `SHOW_VIM_MODE` |
+| `version` | Claude Code version | `SHOW_VERSION` |
+| `session-id` | session ID | `SHOW_SESSION_ID` |
+| `session-name` | session name | `SHOW_SESSION_NAME` |
+| `cost` | cost, duration, lines changed | `SHOW_COST_GROUP` |
+| `rate-limits` | 5h / 7d bars | `SHOW_RATE_LIMITS` |
+| `worktree` | worktree row | `SHOW_WORKTREE` |
+| `pr` | PR / MR badge | `SHOW_PR` |
+| `fast` | fast-mode ⚡ badge | `SHOW_FAST` |
+| `cache` | prompt-cache badge | `SHOW_CACHE` |
+| `spend` | gateway spend meter | `SHOW_SPEND` |
+| `cwd-path` | `user@host:path` | `SHOW_CWD_PATH` |
+| `clickable-links` | OSC 8 links | `SHOW_CLICKABLE_LINKS` |
 
 ## Line Count
 
 ```bash
-STATUSLINE_LINES="${STATUSLINE_LINES:-3}"  # 1, 2, or 3
+bash ~/.claude/statusline.sh --lines 2   # saved; 1, 2 or 3
+STATUSLINE_LINES=1 claude                # one session only; the env var beats the file
 ```
 
-Override at runtime:
+## The Settings File
 
-```bash
-STATUSLINE_LINES=2 claude
+`~/.claude/statusline.conf` (move it with `STATUSLINE_CONF=/path`) is plain `KEY=value`:
+
+```
+STATUSLINE_LINES=2
+SHOW_COST_GROUP=false
 ```
 
-Or set permanently in `~/.claude/settings.json`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "STATUSLINE_LINES=2 bash ~/.claude/statusline.sh"
-  }
-}
-```
-
-## Feature Toggles
-
-Set any to `false` to hide:
-
-```bash
-SHOW_MODEL=true
-SHOW_TOKENS=true
-SHOW_GIT=true
-SHOW_FOLDER=true
-SHOW_THINKING=true      # thinking + effort combined block
-SHOW_EFFORT=true        # part of thinking+effort block
-SHOW_OUTPUT_STYLE=true
-SHOW_CAVEMAN=true
-SHOW_AGENT=true
-SHOW_ADVISOR=true
-SHOW_VIM_MODE=true
-SHOW_VERSION=true
-SHOW_SESSION_ID=true
-SHOW_SESSION_NAME=true
-SHOW_COST_GROUP=true
-SHOW_RATE_LIMITS=true
-SHOW_WORKTREE=true
-SHOW_PR=true
-SHOW_FAST=true         # ⚡ badge while fast mode is on
-SHOW_CACHE=true        # prompt-cache warm/cold badge (L2, full tier only)
-SHOW_SPEND=true        # gateway spend-limit meter (only present behind a gateway)
-SHOW_CWD_PATH=true     # user@host:~/project ▸subdir on the host row (project path + drift marker)
-SHOW_CLICKABLE_LINKS=true
-```
+It is parsed strictly and never executed. Only `SHOW_<known flag>=true|false` and `STATUSLINE_LINES=1|2|3` take
+effect; any other line is ignored.
 
 ## Advanced Configuration
 
