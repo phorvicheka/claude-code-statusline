@@ -21,7 +21,10 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) IS_WIN=true ;; *) IS_WIN=false ;; es
 UTF8_LOCALE=$(locale -a 2>/dev/null | grep -iE '^(c|en_us)\.utf-?8$' | head -1)
 
 # Short, symlink-free sandbox: macOS $TMPDIR is long (/var/folders/...) and /var is a symlink to /private/var.
-SANDBOX="$(cd "$(mktemp -d /tmp/sl.XXXXXX)" && pwd -P)"
+# Row-count tests assume a short path; Windows %TEMP% is long, the Actions runner temp (D:\a\_temp) is not.
+TMP_BASE=/tmp
+$IS_WIN && [[ -n "${RUNNER_TEMP:-}" ]] && TMP_BASE="$(cygpath -u "$RUNNER_TEMP")"
+SANDBOX="$(cd "$(mktemp -d "$TMP_BASE/sl.XXXXXX")" && pwd -P)"
 # On Windows, Claude Code sends Windows paths and git prints C:/... ones: use that form throughout.
 $IS_WIN && SANDBOX="$(cygpath -m "$SANDBOX")"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -238,6 +241,8 @@ MEM="$REPO/.claude/memory"; mkdir -p "$MEM"
 at() { printf '.cwd="%s" | .workspace.current_dir="%s"' "$1" "$1"; }   # at <dir> → jq filter
 count() { grep -c -- "$1" <<<"$LAST_OUT" || true; }
 # widest rendered row among those containing $1 (UTF-8 aware; emoji margin covered by _FLEX_MARGIN)
+# Widest output row in characters. Not awk length(): macOS awk counts bytes, so █ ⟲ … would inflate it.
+maxwidth() { ( LC_ALL="${UTF8_LOCALE:-C.UTF-8}"; m=0; while IFS= read -r l; do (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
 rowmax() { ( LC_ALL="${UTF8_LOCALE:-C.UTF-8}"; m=0; while IFS= read -r l; do [[ "$l" == *"$1"* ]] && (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
 
 render "$(at "$MEM")"
@@ -363,7 +368,7 @@ echo '{"autoCompactWindow": 327000, "autoCompactEnabled": false}' > "$ACO/.claud
 render ".cwd=\"$ACO\" | .workspace.current_dir=\"$ACO\" | .workspace.project_dir=\"$ACO\""
 hasnt "autoCompactEnabled:false: no rescale" "⟲"
 TERM_WIDTH_OVERRIDE=100 render "$OPUS"
-maxw=$(LC_ALL="${UTF8_LOCALE:-C.UTF-8}" awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
+maxw=$(maxwidth)
 (( maxw <= 100 )) && ok "rescaled tail fits at 100 cols (max $maxw)" || bad "rescaled tail fits at 100 cols" "max line = $maxw"
 
 echo "── width ──"
@@ -372,7 +377,7 @@ nlines "narrow tier forces a single line" 1
 TERM_WIDTH_OVERRIDE=160 render '.'
 nlines "full tier renders 3 lines (non-worktree)" 3
 # No visible line may exceed TERM_WIDTH (wide glyph margin allowed: emoji count 2 cols)
-maxw=$(LC_ALL="${UTF8_LOCALE:-C.UTF-8}" awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
+maxw=$(maxwidth)
 (( maxw <= 160 )) && ok "no line wider than TERM_WIDTH=160 (max $maxw)" || bad "no line wider than TERM_WIDTH=160" "max line = $maxw"
 LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
 # At 100 columns user@host:path cannot share a row with settings/output: it splits onto
