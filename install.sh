@@ -72,10 +72,9 @@ if (( ${#missing[@]} > 0 )); then
     exit 1
 fi
 
-# Check bash version >= 4
-bash_ver="${BASH_VERSINFO[0]}"
-if (( bash_ver < 4 )); then
-    warn "Bash version ${BASH_VERSION} detected. Version 4+ recommended."
+# bash 3.2 (macOS /bin/bash) is enough; older is untested.
+if (( BASH_VERSINFO[0] < 3 || (BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] < 2) )); then
+    warn "Bash version ${BASH_VERSION} detected. Version 3.2+ required."
 fi
 
 ok "Dependencies satisfied (bash ${BASH_VERSION}, jq $(jq --version 2>&1), git)"
@@ -140,6 +139,13 @@ fi
 
 ok "Installed statusline.sh to ${TARGET}"
 
+# Path written into settings.json. On Windows, Claude Code runs the command through Git Bash and the docs
+# ask for forward-slash Windows paths (C:/Users/...), not MSYS paths (/c/Users/...).
+CMD_TARGET="$TARGET"
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && CMD_TARGET="$(cygpath -m "$TARGET")" ;;
+esac
+
 # ------------------------------------------------------------------
 # 6. Configure settings.json
 # ------------------------------------------------------------------
@@ -158,7 +164,7 @@ if [[ -f "$SETTINGS" ]]; then
             fi
             if [[ "$overwrite" =~ ^[Yy] ]]; then
                 tmp=$(mktemp)
-                jq '.statusLine = {"type": "command", "command": "bash '"$TARGET"'"}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
+                jq '.statusLine = {"type": "command", "command": "bash '"$CMD_TARGET"'"}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
                 ok "Updated statusLine in settings.json"
             else
                 warn "Skipped settings.json update"
@@ -166,7 +172,7 @@ if [[ -f "$SETTINGS" ]]; then
         fi
     else
         tmp=$(mktemp)
-        jq '. + {"statusLine": {"type": "command", "command": "bash '"$TARGET"'"}}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
+        jq '. + {"statusLine": {"type": "command", "command": "bash '"$CMD_TARGET"'"}}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
         ok "Added statusLine config to settings.json"
     fi
 else
@@ -174,7 +180,7 @@ else
 {
   "statusLine": {
     "type": "command",
-    "command": "bash ${TARGET}"
+    "command": "bash ${CMD_TARGET}"
   }
 }
 EOF

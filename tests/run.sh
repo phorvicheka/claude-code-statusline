@@ -6,6 +6,7 @@
 #
 #   bash tests/run.sh          # run all
 #   bash tests/run.sh -v       # print each rendered output
+#   SUT_BASH=/bin/bash bash tests/run.sh   # run the scripts under test with another bash (macOS 3.2)
 #
 # Requires: bash 4+, jq, git.
 
@@ -14,6 +15,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${STATUSLINE_UNDER_TEST:-$ROOT/statusline.sh}"
 VERBOSE=false
 [[ "${1:-}" == "-v" ]] && VERBOSE=true
+SUT_BASH="${SUT_BASH:-bash}"   # interpreter for statusline.sh / install.sh / uninstall.sh
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) IS_WIN=true ;; *) IS_WIN=false ;; esac
+# Any UTF-8 locale for character counting: C.utf8 on Linux, en_US.UTF-8 on macOS.
+UTF8_LOCALE=$(locale -a 2>/dev/null | grep -iE '^(c|en_us)\.utf-?8$' | head -1)
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -69,11 +74,13 @@ render() {
     json=$(base_json | jq -c "$filter")
     LAST_ERR="$SANDBOX/stderr"
     LAST_OUT=$(env "$@" HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" \
-        TERM_WIDTH="${TERM_WIDTH_OVERRIDE:-160}" bash "$SCRIPT" <<<"$json" 2>"$LAST_ERR" | strip)
+        TERM_WIDTH="${TERM_WIDTH_OVERRIDE:-160}" "$SUT_BASH" "$SCRIPT" <<<"$json" 2>"$LAST_ERR" | strip)
     $VERBOSE && printf '    ┌─\n%s\n    └─\n' "$(sed 's/^/    │ /' <<<"$LAST_OUT")"
 }
 
 ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
+SKIP=0
+skip() { SKIP=$((SKIP+1)); printf '  SKIP %s (%s)\n' "$1" "$2"; }
 bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; printf '%s\n' "$LAST_OUT" | sed 's/^/         | /'; }
 
 has()  { [[ "$LAST_OUT" == *"$2"* ]] && ok "$1" || bad "$1" "expected to contain: $2"; }
@@ -133,7 +140,7 @@ render '.session_name="x$(touch '"$SANDBOX"'/pwned)y'"'"'; echo z"'
 [[ ! -e "$SANDBOX/pwned" ]] && ok "hostile session_name is not executed" || bad "hostile session_name is not executed" "pwned file created"
 render '.thinking="$(touch '"$SANDBOX"'/pwned2)"'
 [[ ! -e "$SANDBOX/pwned2" ]] && ok "hostile scalar thinking is not executed" || bad "hostile scalar thinking is not executed" "pwned2 file created"
-LAST_OUT=$(printf 'not json' | HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" TERM_WIDTH=160 bash "$SCRIPT" 2>/dev/null | strip)
+LAST_OUT=$(printf 'not json' | HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" TERM_WIDTH=160 "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
 [[ -n "$LAST_OUT" ]] && ok "garbage stdin still prints something" || bad "garbage stdin still prints something" "empty output"
 
 echo "── /rename shows at once (custom-title from transcript beats stale JSON) ──"
@@ -228,7 +235,7 @@ MEM="$REPO/.claude/memory"; mkdir -p "$MEM"
 at() { printf '.cwd="%s" | .workspace.current_dir="%s"' "$1" "$1"; }   # at <dir> → jq filter
 count() { grep -c -- "$1" <<<"$LAST_OUT" || true; }
 # widest rendered row among those containing $1 (UTF-8 aware; emoji margin covered by _FLEX_MARGIN)
-rowmax() { ( LC_ALL=C.utf8; m=0; while IFS= read -r l; do [[ "$l" == *"$1"* ]] && (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
+rowmax() { ( LC_ALL="${UTF8_LOCALE:-C.UTF-8}"; m=0; while IFS= read -r l; do [[ "$l" == *"$1"* ]] && (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
 
 render "$(at "$MEM")"
 has   "drift: L1 shows project root + ▸subdir"           "main-repo ▸.claude/memory"
@@ -364,7 +371,7 @@ nlines "full tier renders 3 lines (non-worktree)" 3
 # No visible line may exceed TERM_WIDTH (wide glyph margin allowed: emoji count 2 cols)
 maxw=$(awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
 (( maxw <= 160 )) && ok "no line wider than TERM_WIDTH=160 (max $maxw)" || bad "no line wider than TERM_WIDTH=160" "max line = $maxw"
-LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" bash "$SCRIPT" 2>/dev/null | strip)
+LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
 # At 100 columns user@host:path cannot share a row with settings/output: it splits onto
 # its own row (4 rows) instead of dropping the path. At the default width it would be 3.
 nlines "COLUMNS env is honoured when TERM_WIDTH unset (100 cols: host row splits, 4 rows)" 4
@@ -375,7 +382,7 @@ sec_render() {  # sec_render <cache-dir> [ENV=val ...]: render with an explicit 
     local cdir="$1"; shift
     LAST_ERR="$SANDBOX/stderr"
     LAST_OUT=$(base_json | env "$@" HOME="$HOME" STATUSLINE_CACHE_DIR="$cdir" TERM_WIDTH=160 \
-        bash "$SCRIPT" 2>"$LAST_ERR" | strip)
+        "$SUT_BASH" "$SCRIPT" 2>"$LAST_ERR" | strip)
 }
 none() { [[ ! -e "$2" ]] && ok "$1" || bad "$1" "$2 exists"; }
 
@@ -396,12 +403,16 @@ has  "still renders with a hostile git cache" "main-repo"
 printf '%s\t%s' 'x[$(touch '"$SEC"'/pwn-tx)]' '$(touch '"$SEC"'/pwn-tx)' > "$C1/tx-advisor-nosession"
 sec_render "$C1" 
 none "planted transcript cache is not evaluated" "$SEC/pwn-tx"
-LAST_OUT=$(base_json | env -u TERM_WIDTH -u COLUMNS HOME="$HOME" STATUSLINE_CACHE_DIR="$C1" SEC="$SEC" C1="$C1" SCRIPT="$SCRIPT" \
-    bash -c 'printf "%s" "x[\$(touch $SEC/pwn-width)]" > "$C1/width-$$"; bash "$SCRIPT"; true' 2>/dev/null | strip)
+LAST_OUT=$(base_json | env -u TERM_WIDTH -u COLUMNS HOME="$HOME" STATUSLINE_CACHE_DIR="$C1" SEC="$SEC" C1="$C1" SCRIPT="$SCRIPT" SUT_BASH="$SUT_BASH" \
+    "$SUT_BASH" -c 'printf "%s" "x[\$(touch $SEC/pwn-width)]" > "$C1/width-$$"; "$SUT_BASH" "$SCRIPT"; true' 2>/dev/null | strip)
 none "planted width cache is not evaluated" "$SEC/pwn-width"
 [[ -n "$LAST_OUT" ]] && ok "still renders with a hostile width cache" || bad "still renders with a hostile width cache" "empty output"
 
 # 2. A symlink planted at a cache path must not be followed by our writes.
+# Git Bash's ln -s copies instead of linking, so cases 2-3 cannot be set up there.
+if $IS_WIN; then
+    skip "symlink cases (2, 3)" "Git Bash ln -s copies"
+else
 C2="$SEC/c2"; mkdir -p "$C2"; chmod 700 "$C2"
 VICTIM="$SEC/victim"; printf 'precious' > "$VICTIM"
 sec_render "$C2"
@@ -417,19 +428,40 @@ REAL="$SEC/real-root"; mkdir -p "$REAL"; ln -s "$REAL" "$SEC/link-root"
 sec_render "$SEC/link-root"
 has  "symlinked cache root: still renders" "◉ xhigh"
 [[ -z "$(ls -A "$REAL")" ]] && ok "symlinked cache root: nothing written through it" || bad "symlinked cache root: nothing written through it" "$(ls "$REAL")"
+fi
 
 # 4. Default location: $XDG_RUNTIME_DIR/claude-statusline, created 0700.
 XR="$SEC/xdg"; mkdir -p "$XR"; chmod 700 "$XR"
-LAST_OUT=$(base_json | env -u STATUSLINE_CACHE_DIR XDG_RUNTIME_DIR="$XR" HOME="$HOME" TERM_WIDTH=160 bash "$SCRIPT" 2>/dev/null | strip)
-mode=$(stat -c %a "$XR/claude-statusline" 2>/dev/null || echo none)
-[[ "$mode" == "700" ]] && ok "default cache dir is created 0700 under XDG_RUNTIME_DIR" || bad "default cache dir is created 0700 under XDG_RUNTIME_DIR" "mode=$mode"
+LAST_OUT=$(base_json | env -u STATUSLINE_CACHE_DIR XDG_RUNTIME_DIR="$XR" HOME="$HOME" TERM_WIDTH=160 "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
+mode=$(stat -c %a "$XR/claude-statusline" 2>/dev/null || stat -f %Lp "$XR/claude-statusline" 2>/dev/null || echo none)
+if $IS_WIN; then
+    skip "default cache dir is created 0700" "NTFS has no POSIX modes"
+else
+    [[ "$mode" == "700" ]] && ok "default cache dir is created 0700 under XDG_RUNTIME_DIR" || bad "default cache dir is created 0700 under XDG_RUNTIME_DIR" "mode=$mode"
+fi
 [[ -n "$(ls -A "$XR/claude-statusline" 2>/dev/null)" ]] && ok "default cache dir is actually used" || bad "default cache dir is actually used" "empty"
 
 
+echo "== portability lint (static: macOS bash 3.2, BSD grep/sed, no tac) =="
+# Static evidence only; the macOS CI job runs the scripts under /bin/bash 3.2 for real.
+lint() {  # lint <name> <ERE>: fail if any non-comment line of the shipped scripts matches
+    local hits
+    hits=$(grep -nE -- "$2" "$ROOT/statusline.sh" "$ROOT/install.sh" "$ROOT/uninstall.sh" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+    [[ -z "$hits" ]] && ok "no $1" || { FAIL=$((FAIL+1)); printf '  FAIL no %s\n%s\n' "$1" "$(sed 's/^/         | /' <<<"$hits")"; }
+}
+lint 'bash-4 case conversion ${x,,} ${x^^}' '\$\{[A-Za-z_][A-Za-z0-9_]*(,,?|\^\^?)\}'
+lint 'associative/global/nameref declare' '(declare|local|typeset) +-[a-zA-Z]*[Agn]'
+lint 'mapfile/readarray' '\b(mapfile|readarray)\b'
+lint '[[ -v ]] tests' '\[\[ +-v '
+lint 'negative substring length ${s:0:-1}' '\$\{[A-Za-z_][A-Za-z0-9_]*:[^}]*:-[0-9]'
+lint 'grep -P (BSD grep has none)' 'grep +-[a-zA-Z]*P'
+lint 'unguarded tac (macOS has none)' '(^|[|;&]|\$\() *tac '
+lint 'sed -r (BSD sed needs -E)' 'sed +-[a-zA-Z]*r'
+
 echo "== installers =="
 # Each case gets a fresh HOME; installers run without a TTY, as under Claude's Bash tool.
-inst() { HOME="$IH" XDG_RUNTIME_DIR='' STATUSLINE_REFRESH_INTERVAL=0 bash "$ROOT/install.sh" "$@" </dev/null >/dev/null 2>&1; }
-uninst() { HOME="$IH" XDG_RUNTIME_DIR='' bash "$ROOT/uninstall.sh" "$@" </dev/null >/dev/null 2>&1; }
+inst() { HOME="$IH" XDG_RUNTIME_DIR='' STATUSLINE_REFRESH_INTERVAL=0 "$SUT_BASH" "$ROOT/install.sh" "$@" </dev/null >/dev/null 2>&1; }
+uninst() { HOME="$IH" XDG_RUNTIME_DIR='' "$SUT_BASH" "$ROOT/uninstall.sh" "$@" </dev/null >/dev/null 2>&1; }
 fresh() { IH="$SANDBOX/ih-$1"; mkdir -p "$IH/.claude"; }
 nbak() { local f n=0; for f in "$IH/.claude/statusline.sh".bak.*; do [[ -f "$f" ]] && n=$((n+1)); done; echo "$n"; }
 
@@ -452,5 +484,5 @@ fresh foreign; printf '#!/bin/sh\necho mine\n' > "$IH/.claude/statusline.sh"; in
 uninst -y
 grep -q 'echo mine' "$IH/.claude/statusline.sh" 2>/dev/null && ok "uninstall restores the foreign script" || bad "uninstall restores the foreign script" "not restored"
 echo
-printf 'passed: %d  failed: %d\n' "$PASS" "$FAIL"
+printf 'passed: %d  failed: %d  skipped: %d   (bash under test: %s)\n' "$PASS" "$FAIL" "$SKIP" "$("$SUT_BASH" -c 'echo $BASH_VERSION')"
 (( FAIL == 0 ))

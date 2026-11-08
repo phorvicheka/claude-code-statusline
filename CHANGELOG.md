@@ -17,12 +17,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **macOS: stock `/bin/bash` 3.2 and BSD tools.** `${var,,}` (bash 4+) is replaced by a fork-free `_lower`
+  helper. The transcript reader no longer uses `grep -P` or `tac`, which macOS lacks; it uses `grep -oE` + `sed -E`
+  and `tail -r`. Before, the output style label and the advisor model hit "bad substitution", and `/effort`,
+  `/advisor` and the `/rename` title were silently missing on macOS.
+- **Windows: settings path.** On Git Bash the installer writes `bash C:/Users/.../statusline.sh` (via `cygpath -m`),
+  the form the Claude Code docs ask for, instead of the MSYS path `/c/Users/...`.
+- `.gitattributes` keeps `*.sh` at LF on Windows checkouts.
 - **Uninstall after an update left the statusline in place.** Every re-install backed up our own previous script,
   and uninstall "restored" that copy. Now install backs up only a foreign script, and uninstall skips and deletes
   backups of our own versions (header marker `Claude Code Status Line v2`). Covered in `tests/run.sh`.
 
 ### Changed
 
+- **CI on Linux, macOS and Windows.** `.github/workflows/test.yml` runs `tests/ci.sh` (shellcheck, `bash -n`,
+  `tests/run.sh`) on `ubuntu-latest`, `macos-latest` under `/bin/bash` 3.2, and `windows-latest` under Git Bash.
+  `bash tests/ci.sh --fresh` runs the same check locally on a fresh clone of HEAD.
+- `tests/run.sh`: `SUT_BASH` picks the interpreter for the shipped scripts; a static portability lint; BSD `stat`
+  and macOS locale fallbacks; Windows-only SKIPs (symlinks, POSIX modes) are counted and printed, never passed.
+- Requirements: bash 3.2+ (was 4+); `gh` dropped from the list (the PR badge uses Claude Code's JSON).
 - `.claude/settings.local.json` and `.codex` are no longer tracked; `.gitignore` added (also ignores `.tmp/`).
   Before, a personal permission allowlist was copied into every plugin install.
 - `docs/contributing.md`: plugin updates need a `version` bump in `.claude-plugin/plugin.json`.

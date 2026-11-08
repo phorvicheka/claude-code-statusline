@@ -77,7 +77,7 @@ bash install.sh -y -l 2  # non-interactive, 2-line mode
 ```
 
 The installer will:
-1. Check dependencies (bash 4+, jq, git; warns if gh is missing)
+1. Check dependencies (bash 3.2+, jq, git)
 2. Back up any existing statusline.sh
 3. Install or update the script to `~/.claude/statusline.sh`
 4. Configure `~/.claude/settings.json`
@@ -103,19 +103,33 @@ chmod +x ~/.claude/statusline.sh
 
 ### Requirements
 
-- **bash** 4.0+
+- **Claude Code CLI** running in a terminal. See [Where It Works](#where-it-works).
+- **bash** 3.2+ (stock macOS `/bin/bash` works; on Windows, Git Bash)
 - **jq** (JSON processor)
 - **git** (for branch info)
-- **gh** (GitHub CLI, optional -- for PR# display)
+
+The PR badge comes from Claude Code's own JSON, so `gh` is not needed.
+
+### Where It Works
+
+The status line is a feature of the Claude Code **CLI in a terminal**. That includes the integrated terminal of
+VS Code, Cursor or JetBrains IDEs, where the JetBrains plugin also runs `claude`. The Claude Code docs do not
+document `statusLine` for the VS Code extension's chat panel, the Desktop app, or claude.ai/code (web, no local
+`~/.claude`), so those are not supported.
+
+The plugin install was tested on Claude Code 2.1.319. Older versions without plugin support can use the script install.
 
 ### Platform Notes
 
-| Platform | Status | Notes |
-|----------|--------|-------|
-| Linux | Full support | Native environment |
-| macOS | Full support | BSD `date`/`stat` fallbacks included |
-| WSL (Ubuntu) | Full support | Handles Windows backslash paths (`C:\Users\...`) sent by Claude Code |
-| Windows (Git Bash / MSYS2) | Full support | GNU coreutils bundled; `stty size` may fail (defaults to 80 cols / compact tier) |
+Every push and PR runs `tests/ci.sh` on all three OSes ([workflow](.github/workflows/test.yml)). Run the same check
+locally with `bash tests/ci.sh --fresh`.
+
+| Platform | Status | Tested by | Notes |
+|----------|--------|-----------|-------|
+| Linux | PLATFORM_LINUX | CI `ubuntu-latest` | Native environment |
+| WSL (Ubuntu) | Tested locally | `tests/ci.sh` on WSL2 Ubuntu | Handles Windows backslash paths (`C:\Users\...`) sent by Claude Code |
+| macOS | PLATFORM_MAC | CI `macos-latest`, stock `/bin/bash` 3.2 | BSD `date`/`stat`/`grep`, `tail -r` instead of `tac` |
+| Windows | PLATFORM_WIN | CI `windows-latest`, Git Bash | Requires [Git for Windows](https://gitforwindows.org/): Claude Code runs status line commands through Git Bash, and falls back to PowerShell without it, which cannot run this script. The installer writes a `C:/Users/...` path. `stty size` may fail (defaults to 80 cols / compact tier) |
 
 Claude Code may send working directory paths with backslashes on Windows. The statusline normalizes all path separators automatically -- folder names, git operations, and settings lookups all work regardless of separator style.
 

@@ -891,7 +891,24 @@ get_git_info() {
 
 # ===========================================================================
 # Transcript scan (incremental, cached)
-# _tx_last <tag> <grep-line-regex> <grep-P-extract-regex>
+# _lower <var> <string>: ASCII lowercase into <var> without forking.
+# Not ${s,,}: that is bash 4+, and macOS ships /bin/bash 3.2.
+_UC=ABCDEFGHIJKLMNOPQRSTUVWXYZ _LC=abcdefghijklmnopqrstuvwxyz
+_lower() {
+    local _s="$2" _o="" _c _t _i
+    for (( _i = 0; _i < ${#_s}; _i++ )); do
+        _c="${_s:_i:1}"
+        case "$_c" in
+            [ABCDEFGHIJKLMNOPQRSTUVWXYZ]) _t="${_UC%%"$_c"*}"; _c="${_LC:${#_t}:1}" ;;
+        esac
+        _o+="$_c"
+    done
+    printf -v "$1" '%s' "$_o"
+}
+
+# _tx_last <tag> <grep-line-regex> <extract-ERE> <sed-strip-expr>
+# The ERE matches prefix+value (grep -oE); the sed expression strips it down to the value.
+# Portable on purpose: BSD grep (macOS) has no -P, and macOS has no tac.
 # Prints the value from the LAST transcript line matching the regex. The
 # transcript only grows, so remember how many bytes were scanned plus the last
 # hit, and on the next call scan just the new tail (re-reading 4KB of overlap
@@ -899,7 +916,7 @@ get_git_info() {
 # transcript) triggers a full backwards scan. Result is cached per session+tag.
 # ===========================================================================
 _tx_last() {
-    local tag="$1" line_re="$2" extract_re="$3"
+    local tag="$1" line_re="$2" extract_re="$3" strip="$4"
     local f="$TRANSCRIPT_PATH"
     [[ -n "$f" && -f "$f" ]] || return 0
     local size
@@ -924,10 +941,15 @@ _tx_last() {
     elif [[ "$cs" =~ ^[0-9]+$ ]] && (( cs < size )); then
         local start=$(( cs > 4096 ? cs - 4096 : 0 ))
         hit=$(tail -c +$(( start + 1 )) -- "$f" 2>/dev/null | grep -a "$line_re" | tail -n 1 \
-              | grep -oP "$extract_re" | head -1 || true)
+              | grep -oE -- "$extract_re" | head -1 | sed -E "$strip" || true)
         [[ -z "$hit" ]] && hit="$cv"
     else
-        hit=$(tac -- "$f" 2>/dev/null | grep -a -m1 "$line_re" | grep -oP "$extract_re" | head -1 || true)
+        # tac stops reading at the first (newest) hit; macOS has tail -r instead. Pick one up front:
+        # "tac || tail -r" would also run tail -r whenever grep -m1 closes the pipe early.
+        local rev=(tac --)
+        command -v tac >/dev/null 2>&1 || rev=(tail -r)
+        hit=$("${rev[@]}" "$f" 2>/dev/null | grep -a -m1 "$line_re" \
+              | grep -oE -- "$extract_re" | head -1 | sed -E "$strip" || true)
     fi
     [[ -n "$cf" ]] && _cache_write "$cf" "$(printf '%s\t%s' "$size" "$hit")"
     printf '%s' "$hit"
@@ -1201,7 +1223,7 @@ render_thinking_effort() {
         if [[ -z "$level" && "$MODERN_SCHEMA" != "true" ]]; then
             level=$(_tx_last effort \
                 '"content":"<local-command-stdout>[^"]*[Ee]ffort level' \
-                '(?:Set effort level to|Effort level set to) \K(low|medium|high|xhigh|max|auto)')
+                '(Set effort level to|Effort level set to) (low|medium|high|xhigh|max|auto)' 's/.* //')
             [[ -z "$level" && -n "$SETTINGS_EFFORT_MODEL" ]] && level="$SETTINGS_EFFORT_MODEL"
             [[ -z "$level" && -n "$SETTINGS_EFFORT_LEVEL" ]] && level="$SETTINGS_EFFORT_LEVEL"
             [[ -z "$level" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]] && level="$CLAUDE_CODE_EFFORT_LEVEL"
@@ -1251,7 +1273,7 @@ render_output_style() {
         [Dd]efault)     icon="⚙️";  label="default" ;;
         [Ee]xplanatory) icon="🔎";  label="explanatory"; label_color="$C_WHITE" ;;
         [Ll]earning)    icon="🎓";  label="learning";     label_color="$C_WHITE" ;;
-        *)              icon="⚙️";  label="${style,,}";   label_color="$C_WHITE" ;;
+        *)              icon="⚙️";  _lower label "$style"; label_color="$C_WHITE" ;;
     esac
     printf '%s  %b%s%b' "$icon" "$label_color" "$label" "$C_RESET"
 }
@@ -1294,11 +1316,11 @@ render_advisor() {
     #    Incremental + cached: transcripts reach 100MB+, a full scan per render cost ~450ms.
     model=$(_tx_last advisor \
         '"content":"<local-command-stdout>Advisor set to' \
-        '(?:Advisor set to )\K\w+')
-    [[ -n "$model" ]] && model="${model,,}"
+        'Advisor set to [A-Za-z0-9_]+' 's/.* //')
+    [[ -n "$model" ]] && _lower model "$model"
     # 2. Fall back to advisorModel in settings JSON (preloaded cache, persisted default)
     if [[ -z "$model" && -n "$SETTINGS_ADVISOR_MODEL" ]]; then
-        model="${SETTINGS_ADVISOR_MODEL,,}"
+        _lower model "$SETTINGS_ADVISOR_MODEL"
     fi
     [[ -z "$model" || "$model" == "off" ]] && return
     local color="$C_BLUE"
@@ -1342,7 +1364,7 @@ render_session_ids() {
         # JSON session_name only catches up on the next statusline event (refresh
         # tick or new message). The transcript entry is therefore the fresher source.
         local tx_name
-        tx_name=$(_tx_last title '"type":"custom-title"' '(?<="customTitle":")[A-Za-z0-9 _.-]+(?=")' 2>/dev/null)
+        tx_name=$(_tx_last title '"type":"custom-title"' '"customTitle":"[A-Za-z0-9 _.-]+"' 's/^"customTitle":"//; s/"$//' 2>/dev/null)
         local cur_name="${tx_name:-$SESSION_NAME}"
         if [[ -n "$cur_name" ]]; then
             # Flex: fit the name into the columns left on the row (fixed part is
