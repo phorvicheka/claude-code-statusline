@@ -1,6 +1,10 @@
 {
   "name": "phorvicheka",
-  "owner": { "name": "phorvicheka", "url": "https://github.com/phorvicheka" },
+  "owner": {
+    "name": "phorvicheka",
+    "url": "https://github.com/phorvicheka"
+  },
+  "description": "Claude Code status line plugins by phorvicheka.",
   "plugins": [
     {
       "name": "adaptive-statusline",
