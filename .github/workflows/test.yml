@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shellcheck: "1"
+            sut_bash: bash
+          - os: macos-latest
+            shellcheck: ""
+            sut_bash: /bin/bash   # stock macOS bash 3.2
+          - os: windows-latest
+            shellcheck: ""
+            sut_bash: bash        # Git Bash
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: tests/ci.sh
+        env:
+          CI_SHELLCHECK: ${{ matrix.shellcheck }}
+          SUT_BASH: ${{ matrix.sut_bash }}
+        run: bash tests/ci.sh

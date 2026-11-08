@@ -15,6 +15,7 @@ shopt -s extglob  # used by _vis_len to strip ANSI sequences without forking
 # ===========================================================================
 
 # ── Line count (override via env: STATUSLINE_LINES=3 claude) ──
+_SL_LINES_ENV="${STATUSLINE_LINES:+1}"   # env beats statusline.conf
 STATUSLINE_LINES="${STATUSLINE_LINES:-3}"  # 1, 2, or 3
 
 # ── Feature toggles (set false to hide any element) ──
@@ -41,6 +42,120 @@ SHOW_CACHE=true      # prompt-cache warm/cold badge (L2, wide+ tiers only)
 SHOW_SPEND=true      # gateway spend-limit meter (L2, only when present)
 SHOW_CWD_PATH=true   # user@host:~/path on the host row (deduped vs worktree path)
 SHOW_CLICKABLE_LINKS=true
+
+# ── User settings file: survives reinstalls and plugin updates ──
+# Written by `statusline.sh --hide/--show/--lines/--reset` (and the plugin's configure skill).
+# Parsed strictly, never sourced: only SHOW_<known>=true|false and STATUSLINE_LINES=1|2|3 apply.
+STATUSLINE_CONF="${STATUSLINE_CONF:-${HOME}/.claude/statusline.conf}"
+# section name = SHOW_* flag suffix
+_SECTIONS="model=MODEL tokens=TOKENS git=GIT folder=FOLDER thinking=THINKING effort=EFFORT
+output-style=OUTPUT_STYLE caveman=CAVEMAN agent=AGENT advisor=ADVISOR vim-mode=VIM_MODE version=VERSION
+session-id=SESSION_ID session-name=SESSION_NAME cost=COST_GROUP rate-limits=RATE_LIMITS worktree=WORKTREE
+pr=PR fast=FAST cache=CACHE spend=SPEND cwd-path=CWD_PATH clickable-links=CLICKABLE_LINKS"
+
+_flag_of() {  # _flag_of <section> → sets _FLAG=SHOW_*, fails on an unknown name
+    local pair
+    for pair in $_SECTIONS; do
+        [[ "${pair%%=*}" == "$1" ]] && { _FLAG="SHOW_${pair#*=}"; return 0; }
+    done
+    return 1
+}
+_is_flag() {  # _is_flag <SHOW_*>: one of ours?
+    local pair
+    for pair in $_SECTIONS; do [[ "SHOW_${pair#*=}" == "$1" ]] && return 0; done
+    return 1
+}
+
+# Reads the file into _CONF_LINES and _CONF_HIDDEN (section names).
+_conf_read() {
+    _CONF_LINES=""; _CONF_HIDDEN=""
+    [[ -f "$STATUSLINE_CONF" && -r "$STATUSLINE_CONF" ]] || return 0
+    local k v pair
+    while IFS='=' read -r k v || [[ -n "$k" ]]; do
+        v="${v%$'\r'}"
+        case "$k" in
+            STATUSLINE_LINES) [[ "$v" =~ ^[123]$ ]] && _CONF_LINES="$v" ;;
+            SHOW_*)
+                [[ "$v" == false ]] || continue
+                for pair in $_SECTIONS; do
+                    [[ "SHOW_${pair#*=}" == "$k" ]] && _CONF_HIDDEN="$_CONF_HIDDEN ${pair%%=*}"
+                done ;;
+        esac
+    done < "$STATUSLINE_CONF"
+}
+
+_conf_read
+[[ -z "$_SL_LINES_ENV" && -n "$_CONF_LINES" ]] && STATUSLINE_LINES="$_CONF_LINES"
+for _sec in $_CONF_HIDDEN; do _flag_of "$_sec" && printf -v "$_FLAG" '%s' false; done
+unset _sec
+
+_conf_write() {
+    local dir tmp sec
+    dir="$(dirname -- "$STATUSLINE_CONF")"
+    mkdir -p -- "$dir" || return 1
+    tmp="$(mktemp "${STATUSLINE_CONF}.XXXXXX")" || return 1
+    {
+        echo "# Claude Code statusline settings. Change with: bash ~/.claude/statusline.sh --hide/--show/--lines/--reset"
+        [[ -n "$_CONF_LINES" ]] && echo "STATUSLINE_LINES=$_CONF_LINES"
+        for sec in $_CONF_HIDDEN; do _flag_of "$sec" && echo "${_FLAG}=false"; done
+    } > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    # cat > (not mv) keeps a symlinked conf pointing where the user put it
+    cat -- "$tmp" > "$STATUSLINE_CONF" || { rm -f -- "$tmp"; return 1; }
+    rm -f -- "$tmp"
+}
+
+_conf_usage() {
+    cat <<'USAGE'
+Usage: bash ~/.claude/statusline.sh <command>
+  --hide <sections>   hide sections (comma or space separated), e.g. --hide cost,rate-limits
+  --show <sections>   show them again
+  --lines <1|2|3>     set the line mode
+  --list              show every section and whether it is on
+  --reset             show everything, default line mode
+Settings live in ~/.claude/statusline.conf (STATUSLINE_CONF to move it) and survive updates.
+USAGE
+    printf 'Sections: %s\n' "$(for p in $_SECTIONS; do printf '%s ' "${p%%=*}"; done)"
+}
+
+_conf_cli() {
+    local cmd="$1"; shift
+    local arg sec names="" bad="" keep
+    for arg in "$@"; do names="$names ${arg//,/ }"; done
+    case "$cmd" in
+        --hide|--show)
+            [[ -n "${names// /}" ]] || { echo "statusline: $cmd needs at least one section" >&2; _conf_usage >&2; return 2; }
+            for sec in $names; do _flag_of "$sec" || bad="$bad $sec"; done
+            [[ -z "$bad" ]] || { echo "statusline: unknown section(s):$bad" >&2; _conf_usage >&2; return 2; }
+            keep=""
+            for sec in $_CONF_HIDDEN; do
+                case " $names " in *" $sec "*) ;; *) keep="$keep $sec" ;; esac
+            done
+            [[ "$cmd" == --hide ]] && keep="$keep $names"
+            _CONF_HIDDEN="$keep"
+            _conf_write || { echo "statusline: cannot write $STATUSLINE_CONF" >&2; return 1; }
+            echo "${cmd#--}:$names  (saved to $STATUSLINE_CONF)" ;;
+        --lines)
+            [[ "${1:-}" =~ ^[123]$ ]] || { echo "statusline: --lines takes 1, 2 or 3" >&2; return 2; }
+            _CONF_LINES="$1"
+            _conf_write || { echo "statusline: cannot write $STATUSLINE_CONF" >&2; return 1; }
+            echo "lines: $1  (saved to $STATUSLINE_CONF)" ;;
+        --reset)
+            _CONF_LINES=""; _CONF_HIDDEN=""
+            _conf_write || { echo "statusline: cannot write $STATUSLINE_CONF" >&2; return 1; }
+            echo "reset: all sections shown, default line mode" ;;
+        --list)
+            echo "lines: $STATUSLINE_LINES"
+            for arg in $_SECTIONS; do
+                sec="${arg%%=*}"; _FLAG="SHOW_${arg#*=}"
+                if [[ "${!_FLAG}" == true ]]; then printf '  %-16s on\n' "$sec"; else printf '  %-16s OFF\n' "$sec"; fi
+            done ;;
+        *) _conf_usage ;;
+    esac
+}
+
+case "${1:-}" in
+    --hide|--show|--lines|--reset|--list|--help|-h) _conf_cli "$@"; exit $? ;;
+esac
 
 # Auto-detect terminals that do NOT support OSC 8 clickable links.
 # WSL default console (conhost.exe), plain xterm, and most SSH sessions
@@ -211,6 +326,7 @@ eval "$(printf '%s' "$INPUT" | jq -r '
   "CC_VERSION=" + (g(.version) | q),
   "CTX_SIZE=" + (g(.context_window.context_window_size) | num("0")),
   "USED_PCT=" + (g(.context_window.used_percentage) | num("0")),
+  "HAS_CURRENT_USAGE=" + ((g(.context_window.current_usage) | type == "object") | tostring),
   "INPUT_TOKENS=" + (
     if (g(.context_window.current_usage) | type) == "object" then
       ((g(.context_window.current_usage.input_tokens) | num("0") | tonumber)
@@ -263,6 +379,7 @@ eval "$(printf '%s' "$INPUT" | jq -r '
 : "${EFFORT_LEVEL_JSON:=}" "${MODERN_SCHEMA:=false}" "${WS_MODERN:=false}" "${TRANSCRIPT_PATH:=}"
 : "${FAST_MODE:=false}" "${GIT_WORKTREE_JSON:=}" "${REPO_HOST:=}" "${REPO_OWNER:=}" "${REPO_NAME:=}"
 : "${PR_NUMBER:=}" "${PR_URL:=}" "${PR_STATE:=}" "${PR_KIND:=}"
+: "${HAS_CURRENT_USAGE:=false}"
 : "${PC_PRESENT:=false}" "${PC_OBSERVED:=false}" "${PC_WARM:=false}" "${PC_EXPIRES:=}" "${PC_HIT:=}"
 # Anything that ends up in a bash arithmetic context must be a plain number.
 for _v in CTX_SIZE INPUT_TOKENS LINES_ADDED LINES_REMOVED TOTAL_DURATION_MS; do
@@ -302,9 +419,10 @@ _detect_worktree() {
     git_dir=$(git -C "$dir" rev-parse --git-dir 2>/dev/null) || return
     common_dir=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) || return
 
-    # Normalize to absolute paths for comparison
-    git_dir=$(cd "$dir" && cd "$git_dir" && pwd)
-    common_dir=$(cd "$dir" && cd "$common_dir" && pwd)
+    # Normalize to absolute physical paths: git may print a symlink-resolved --git-dir
+    # (/private/var/... on macOS) while a relative --git-common-dir resolves logically.
+    git_dir=$(cd "$dir" && cd "$git_dir" && pwd -P)
+    common_dir=$(cd "$dir" && cd "$common_dir" && pwd -P)
 
     [[ "$git_dir" == "$common_dir" ]] && return  # not a linked worktree
 
@@ -395,6 +513,12 @@ SETTINGS_EFFORT_MODEL=""   # modelSettings.<model-id>.effortLevel (beats top-lev
 SETTINGS_EFFORT_ENV=""
 SETTINGS_OUTPUT_STYLE=""
 SETTINGS_ADVISOR_MODEL=""
+# Auto-compact (raw strings; validated in _resolve_compact_at, never trusted as numbers here).
+SETTINGS_COMPACT_WINDOW=""   # from the highest-priority file setting modelSettings.<id> or top-level autoCompactWindow
+SETTINGS_COMPACT_ENABLED=""  # autoCompactEnabled
+SETTINGS_COMPACT_ENV=""      # env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+SETTINGS_COMPACT_OFF_ENV=""  # env.DISABLE_AUTO_COMPACT / env.DISABLE_COMPACT
+SETTINGS_COMPACT_PCT_ENV=""  # env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
 
 # The cache file is plain KEY=value lines and is read back through a whitelist:
 # it is never `source`d / eval'd, and values lose control characters.
@@ -403,7 +527,8 @@ _read_settings_cache() {
     # `|| [[ -n $k ]]`: the last line has no trailing newline ($(...) strips it).
     while IFS='=' read -r k v || [[ -n "$k" ]]; do
         case "$k" in
-            SETTINGS_THINKING|SETTINGS_EFFORT_LEVEL|SETTINGS_EFFORT_MODEL|SETTINGS_EFFORT_ENV|SETTINGS_OUTPUT_STYLE|SETTINGS_ADVISOR_MODEL)
+            SETTINGS_THINKING|SETTINGS_EFFORT_LEVEL|SETTINGS_EFFORT_MODEL|SETTINGS_EFFORT_ENV|SETTINGS_OUTPUT_STYLE|SETTINGS_ADVISOR_MODEL|\
+            SETTINGS_COMPACT_WINDOW|SETTINGS_COMPACT_ENABLED|SETTINGS_COMPACT_ENV|SETTINGS_COMPACT_OFF_ENV|SETTINGS_COMPACT_PCT_ENV)
                 printf -v "$k" '%s' "${v//[[:cntrl:]]/}" ;;
         esac
     done < "$1" 2>/dev/null
@@ -411,13 +536,13 @@ _read_settings_cache() {
 
 _load_settings() {
     # Key by cwd + model: the per-model effort lookup depends on the model id.
-    # "settings2-" prefix: older "settings-*" files lack SETTINGS_EFFORT_MODEL.
+    # "settings3-" prefix: older "settings-*"/"settings2-*" files lack newer keys.
     local model_key="${MODEL_ID%%\[*}"   # claude-sonnet-5-5[1m] -> claude-sonnet-5-5 (assumed to match CC's key)
     local cache_file=""
     if [[ -n "$CACHE_ROOT" ]]; then
         local cwd_hash
         cwd_hash=$(printf '%s|%s' "${CWD:-_}" "$model_key" | cksum | awk '{print $1}')
-        cache_file="${CACHE_ROOT}/settings2-${cwd_hash}"
+        cache_file="${CACHE_ROOT}/settings3-${cwd_hash}"
         if (( $(_cache_age "$cache_file") < SETTINGS_CACHE_TTL )); then
             _read_settings_cache "$cache_file"
             return 0
@@ -425,6 +550,7 @@ _load_settings() {
     fi
 
     local thinking="" effort_level="" effort_model="" effort_env="" output_style="" advisor_model=""
+    local compact_window="" compact_enabled="" compact_env="" compact_off_env="" compact_pct_env=""
     local f parsed k v
     for f in "${CWD}/.claude/settings.local.json" "${HOME}/.claude/settings.local.json" \
               "${CWD}/.claude/settings.json"       "${HOME}/.claude/settings.json"; do
@@ -436,7 +562,15 @@ _load_settings() {
             "EM=" + (try ((.modelSettings // {})[$m].effortLevel // "") catch ""),
             "EV=" + (.env.CLAUDE_CODE_EFFORT_LEVEL // ""),
             "O=" + (if has("outputStyle") then .outputStyle else "" end),
-            "A=" + (if has("advisorModel") then .advisorModel else "" end)
+            "A=" + (if has("advisorModel") then .advisorModel else "" end),
+            # Per docs, the highest-priority file that sets either key decides; per-model wins inside it.
+            # A per-model "auto" decides too (= the CC tuned default), so the display stays unchanged.
+            "CW=" + (((try (.modelSettings[$m].autoCompactWindow) catch null) // (try .autoCompactWindow catch null) // "") | tostring),
+            "CE=" + (if has("autoCompactEnabled") then (.autoCompactEnabled | tostring) else "" end),
+            "CV=" + (try (.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW // "" | tostring) catch ""),
+            # Either variable set to 1/true disables; "0" in one must not mask the other.
+            "CD=" + (try ([.env.DISABLE_AUTO_COMPACT, .env.DISABLE_COMPACT] | map(tostring) | if any(. == "1" or . == "true") then "1" else "" end) catch ""),
+            "CP=" + (try (.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE // "" | tostring) catch "")
         ' "$f" 2>/dev/null) || continue
         while IFS='=' read -r k v; do
             v="${v//[[:cntrl:]]/}"
@@ -447,20 +581,64 @@ _load_settings() {
                 EV) [[ -z "$effort_env"    && -n "$v" ]] && effort_env="$v" ;;
                 O)  [[ -z "$output_style"  && -n "$v" ]] && output_style="$v" ;;
                 A)  [[ -z "$advisor_model" && -n "$v" ]] && advisor_model="$v" ;;
+                CW) [[ -z "$compact_window"  && -n "$v" ]] && compact_window="$v" ;;
+                CE) [[ -z "$compact_enabled" && -n "$v" ]] && compact_enabled="$v" ;;
+                CV) [[ -z "$compact_env"     && -n "$v" ]] && compact_env="$v" ;;
+                CD) [[ -z "$compact_off_env" && -n "$v" ]] && compact_off_env="$v" ;;
+                CP) [[ -z "$compact_pct_env" && -n "$v" ]] && compact_pct_env="$v" ;;
             esac
         done <<< "$parsed"
     done
     SETTINGS_THINKING="$thinking"; SETTINGS_EFFORT_LEVEL="$effort_level"
     SETTINGS_EFFORT_MODEL="$effort_model"; SETTINGS_EFFORT_ENV="$effort_env"
     SETTINGS_OUTPUT_STYLE="$output_style"; SETTINGS_ADVISOR_MODEL="$advisor_model"
+    SETTINGS_COMPACT_WINDOW="$compact_window"; SETTINGS_COMPACT_ENABLED="$compact_enabled"
+    SETTINGS_COMPACT_ENV="$compact_env"; SETTINGS_COMPACT_OFF_ENV="$compact_off_env"
+    SETTINGS_COMPACT_PCT_ENV="$compact_pct_env"
 
     [[ -n "$cache_file" ]] && _cache_write "$cache_file" "$(
         printf 'SETTINGS_THINKING=%s\nSETTINGS_EFFORT_LEVEL=%s\nSETTINGS_EFFORT_MODEL=%s\n' "$thinking" "$effort_level" "$effort_model"
         printf 'SETTINGS_EFFORT_ENV=%s\nSETTINGS_OUTPUT_STYLE=%s\nSETTINGS_ADVISOR_MODEL=%s\n' "$effort_env" "$output_style" "$advisor_model"
+        printf 'SETTINGS_COMPACT_WINDOW=%s\nSETTINGS_COMPACT_ENABLED=%s\nSETTINGS_COMPACT_ENV=%s\n' "$compact_window" "$compact_enabled" "$compact_env"
+        printf 'SETTINGS_COMPACT_OFF_ENV=%s\nSETTINGS_COMPACT_PCT_ENV=%s\n' "$compact_off_env" "$compact_pct_env"
     )"
     return 0
 }
 _load_settings
+
+# Effective auto-compact limit in tokens, or "" when the display should stay as before
+# (unset / "auto" / disabled / not below the model window / no live usage).
+# Order per Claude Code docs: env CLAUDE_CODE_AUTO_COMPACT_WINDOW beats settings files;
+# DISABLE_AUTO_COMPACT / DISABLE_COMPACT / autoCompactEnabled:false turn it off.
+# shortcut: managed settings and the --autocompact flag are not read; add if someone uses them.
+_parse_tokens() {   # 400000 | 400k | 1M -> digits on stdout; anything else -> nothing
+    [[ "$1" =~ ^([0-9]{1,7})([kKmM]?)$ ]] || return 1
+    local n=$(( 10#${BASH_REMATCH[1]} ))
+    case "${BASH_REMATCH[2]}" in k|K) n=$(( n * 1000 )) ;; m|M) n=$(( n * 1000000 )) ;; esac
+    printf '%s' "$n"
+}
+_resolve_compact_at() {
+    local off
+    for off in "${DISABLE_AUTO_COMPACT:-}" "${DISABLE_COMPACT:-}" "$SETTINGS_COMPACT_OFF_ENV"; do
+        [[ "$off" == "1" || "$off" == "true" ]] && return
+    done
+    [[ "$SETTINGS_COMPACT_ENABLED" == "false" ]] && return
+    # current_usage absent -> INPUT_TOKENS is cumulative total_input_tokens, not context size.
+    [[ "$HAS_CURRENT_USAGE" == "true" ]] || return
+    local n
+    n=$(_parse_tokens "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-$SETTINGS_COMPACT_ENV}") \
+        || n=$(_parse_tokens "$SETTINGS_COMPACT_WINDOW") || return
+    (( n < 100000 )) && n=100000      # CC clamps to [100k, 1M]
+    (( n > 1000000 )) && n=1000000
+    local pct="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-$SETTINGS_COMPACT_PCT_ENV}"
+    if [[ "$pct" =~ ^[0-9]{1,3}$ ]]; then
+        pct=$(( 10#$pct ))   # "08" is not octal
+        (( pct >= 1 && pct < 100 )) && n=$(( n * pct / 100 ))
+    fi
+    (( CTX_SIZE > 0 && n < CTX_SIZE )) || return
+    printf '%s' "$n"
+}
+COMPACT_AT=$(_resolve_compact_at)
 
 # ===========================================================================
 # Terminal width detection
@@ -574,7 +752,11 @@ esac
 # Fixed L1 overhead ≈ 70 chars (model + seps + tokens + git-prefix + dirty-indicator),
 # +2 while the ⚡ fast-mode badge is shown.
 _l1_overhead=70
-[[ "$FAST_MODE" == "true" ]] && _l1_overhead=72
+[[ "$FAST_MODE" == "true" ]] && _l1_overhead=$(( _l1_overhead + 2 ))
+# "/⟲400k · 1.0m max" vs "/1.0m": +12 on the tiers that show the tail, +1 otherwise.
+if [[ -n "$COMPACT_AT" ]]; then
+    case "$TIER" in full|wide) _l1_overhead=$(( _l1_overhead + 12 )) ;; *) _l1_overhead=$(( _l1_overhead + 1 )) ;; esac
+fi
 _folder_max=$(( TERM_WIDTH - _l1_overhead - _branch_max ))
 (( _folder_max < 10 )) && _folder_max=10
 
@@ -762,8 +944,8 @@ get_git_info() {
             _git_dir=$(git -C "$dir" rev-parse --git-dir 2>/dev/null)
             _common_dir=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)
             if [[ -n "$_git_dir" && -n "$_common_dir" ]]; then
-                _git_dir=$(cd "$dir" && cd "$_git_dir" && pwd)
-                _common_dir=$(cd "$dir" && cd "$_common_dir" && pwd)
+                _git_dir=$(cd "$dir" && cd "$_git_dir" && pwd -P)
+                _common_dir=$(cd "$dir" && cd "$_common_dir" && pwd -P)
             fi
             if [[ "$_git_dir" != "$_common_dir" ]]; then
                 local _my_head _wt_path="" _wt_head="" _wt_branch=""
@@ -825,7 +1007,24 @@ get_git_info() {
 
 # ===========================================================================
 # Transcript scan (incremental, cached)
-# _tx_last <tag> <grep-line-regex> <grep-P-extract-regex>
+# _lower <var> <string>: ASCII lowercase into <var> without forking.
+# Not ${s,,}: that is bash 4+, and macOS ships /bin/bash 3.2.
+_UC=ABCDEFGHIJKLMNOPQRSTUVWXYZ _LC=abcdefghijklmnopqrstuvwxyz
+_lower() {
+    local _s="$2" _o="" _c _t _i
+    for (( _i = 0; _i < ${#_s}; _i++ )); do
+        _c="${_s:_i:1}"
+        case "$_c" in
+            [ABCDEFGHIJKLMNOPQRSTUVWXYZ]) _t="${_UC%%"$_c"*}"; _c="${_LC:${#_t}:1}" ;;
+        esac
+        _o+="$_c"
+    done
+    printf -v "$1" '%s' "$_o"
+}
+
+# _tx_last <tag> <grep-line-regex> <extract-ERE> <sed-strip-expr>
+# The ERE matches prefix+value (grep -oE); the sed expression strips it down to the value.
+# Portable on purpose: BSD grep (macOS) has no -P, and macOS has no tac.
 # Prints the value from the LAST transcript line matching the regex. The
 # transcript only grows, so remember how many bytes were scanned plus the last
 # hit, and on the next call scan just the new tail (re-reading 4KB of overlap
@@ -833,7 +1032,7 @@ get_git_info() {
 # transcript) triggers a full backwards scan. Result is cached per session+tag.
 # ===========================================================================
 _tx_last() {
-    local tag="$1" line_re="$2" extract_re="$3"
+    local tag="$1" line_re="$2" extract_re="$3" strip="$4"
     local f="$TRANSCRIPT_PATH"
     [[ -n "$f" && -f "$f" ]] || return 0
     local size
@@ -858,10 +1057,15 @@ _tx_last() {
     elif [[ "$cs" =~ ^[0-9]+$ ]] && (( cs < size )); then
         local start=$(( cs > 4096 ? cs - 4096 : 0 ))
         hit=$(tail -c +$(( start + 1 )) -- "$f" 2>/dev/null | grep -a "$line_re" | tail -n 1 \
-              | grep -oP "$extract_re" | head -1 || true)
+              | grep -oE -- "$extract_re" | head -1 | sed -E "$strip" || true)
         [[ -z "$hit" ]] && hit="$cv"
     else
-        hit=$(tac -- "$f" 2>/dev/null | grep -a -m1 "$line_re" | grep -oP "$extract_re" | head -1 || true)
+        # tac stops reading at the first (newest) hit; macOS has tail -r instead. Pick one up front:
+        # "tac || tail -r" would also run tail -r whenever grep -m1 closes the pipe early.
+        local rev=(tac --)
+        command -v tac >/dev/null 2>&1 || rev=(tail -r)
+        hit=$("${rev[@]}" "$f" 2>/dev/null | grep -a -m1 "$line_re" \
+              | grep -oE -- "$extract_re" | head -1 | sed -E "$strip" || true)
     fi
     [[ -n "$cf" ]] && _cache_write "$cf" "$(printf '%s\t%s' "$size" "$hit")"
     printf '%s' "$hit"
@@ -993,8 +1197,16 @@ render_tokens() {
     bar=$(build_bar "$pct_int" "$_token_bar")
     used_fmt=$(fmt_tokens "$INPUT_TOKENS")
     max_fmt=$(fmt_tokens "$CTX_SIZE")
+    local limit_txt="${C_DIM}/${max_fmt}${C_RESET}"
+    if [[ -n "$COMPACT_AT" ]]; then
+        # Rescaled to the auto-compact limit: ⟲ must always show, or "/400k" reads as the model window.
+        pct_int=$(( INPUT_TOKENS * 100 / COMPACT_AT ))
+        bar=$(build_bar "$pct_int" "$_token_bar")
+        limit_txt="${C_DIM}/${C_RESET}${C_WHITE}⟲$(fmt_tokens "$COMPACT_AT")${C_RESET}"
+        [[ "$TIER" == "full" || "$TIER" == "wide" ]] && limit_txt+="${C_DIM} · ${max_fmt} max${C_RESET}"
+    fi
     pct_c=$(pct_color "$pct_int")
-    local out="${bar} ${pct_c}${pct_int}%${C_RESET} ${C_WHITE}${used_fmt}${C_DIM}/${max_fmt}${C_RESET}"
+    local out="${bar} ${pct_c}${pct_int}%${C_RESET} ${C_WHITE}${used_fmt}${C_RESET}${limit_txt}"
     # Use ⚠️ (U+26A0 + U+FE0F variation selector) for emoji presentation.
     # Bare ⚠ falls back to text presentation and renders as a missing glyph
     # in many Windows fonts (e.g., Git Bash default Lucida Console).
@@ -1127,7 +1339,7 @@ render_thinking_effort() {
         if [[ -z "$level" && "$MODERN_SCHEMA" != "true" ]]; then
             level=$(_tx_last effort \
                 '"content":"<local-command-stdout>[^"]*[Ee]ffort level' \
-                '(?:Set effort level to|Effort level set to) \K(low|medium|high|xhigh|max|auto)')
+                '(Set effort level to|Effort level set to) (low|medium|high|xhigh|max|auto)' 's/.* //')
             [[ -z "$level" && -n "$SETTINGS_EFFORT_MODEL" ]] && level="$SETTINGS_EFFORT_MODEL"
             [[ -z "$level" && -n "$SETTINGS_EFFORT_LEVEL" ]] && level="$SETTINGS_EFFORT_LEVEL"
             [[ -z "$level" && -n "${CLAUDE_CODE_EFFORT_LEVEL:-}" ]] && level="$CLAUDE_CODE_EFFORT_LEVEL"
@@ -1177,7 +1389,7 @@ render_output_style() {
         [Dd]efault)     icon="⚙️";  label="default" ;;
         [Ee]xplanatory) icon="🔎";  label="explanatory"; label_color="$C_WHITE" ;;
         [Ll]earning)    icon="🎓";  label="learning";     label_color="$C_WHITE" ;;
-        *)              icon="⚙️";  label="${style,,}";   label_color="$C_WHITE" ;;
+        *)              icon="⚙️";  _lower label "$style"; label_color="$C_WHITE" ;;
     esac
     printf '%s  %b%s%b' "$icon" "$label_color" "$label" "$C_RESET"
 }
@@ -1220,11 +1432,11 @@ render_advisor() {
     #    Incremental + cached: transcripts reach 100MB+, a full scan per render cost ~450ms.
     model=$(_tx_last advisor \
         '"content":"<local-command-stdout>Advisor set to' \
-        '(?:Advisor set to )\K\w+')
-    [[ -n "$model" ]] && model="${model,,}"
+        'Advisor set to [A-Za-z0-9_]+' 's/.* //')
+    [[ -n "$model" ]] && _lower model "$model"
     # 2. Fall back to advisorModel in settings JSON (preloaded cache, persisted default)
     if [[ -z "$model" && -n "$SETTINGS_ADVISOR_MODEL" ]]; then
-        model="${SETTINGS_ADVISOR_MODEL,,}"
+        _lower model "$SETTINGS_ADVISOR_MODEL"
     fi
     [[ -z "$model" || "$model" == "off" ]] && return
     local color="$C_BLUE"
@@ -1268,7 +1480,7 @@ render_session_ids() {
         # JSON session_name only catches up on the next statusline event (refresh
         # tick or new message). The transcript entry is therefore the fresher source.
         local tx_name
-        tx_name=$(_tx_last title '"type":"custom-title"' '(?<="customTitle":")[A-Za-z0-9 _.-]+(?=")' 2>/dev/null)
+        tx_name=$(_tx_last title '"type":"custom-title"' '"customTitle":"[A-Za-z0-9 _.-]+"' 's/^"customTitle":"//; s/"$//' 2>/dev/null)
         local cur_name="${tx_name:-$SESSION_NAME}"
         if [[ -n "$cur_name" ]]; then
             # Flex: fit the name into the columns left on the row (fixed part is

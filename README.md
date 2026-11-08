@@ -4,24 +4,42 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ![Claude Code Statusline screenshot](docs/screenshot.png)
 
+<sub>3-line mode at 150 columns with a 400k auto-compact limit (`⟲400k`), rendered by `statusline.sh` from a sample Claude Code payload.</sub>
+
 ## What You Get
 
 - **3 display modes**: 1-line (compact), 2-line, or 3-line (default; grows to 4 rows inside a git worktree; version shown next to model on all modes)
 - **Adaptive width**: Gracefully degrades across 4 terminal width tiers
 - **Color-coded progress bars**: Context window + rate limits (green/yellow/red)
+- **Auto-compact aware**: with `autoCompactWindow` below the model window, the context bar measures against it (`399k/⟲400k · 1.0m max`)
 - **Model-colored names**: Amber (Opus), Blue (Sonnet), Cyan (Haiku)
 - **Clickable links**: Branch -> GitHub, PR -> PR page, Folder -> full path
 - **Git status**: Branch, clean/dirty, ahead/behind, PR/MR number + review state (taken from Claude Code's own JSON: no `gh` CLI, no network)
 - **Session info**: Cost, duration, lines changed, rate limits, worktree, prompt-cache warm/cold + TTL, gateway spend limit, fast-mode ⚡ badge
 - **Settings group** (`settings:`): Thinking, effort, and advisor grouped on L3 in 3-line mode
 - **Output group** (`output:`): Output style and caveman mode grouped on L3 in 3-line mode
-- **Cross-platform**: Works on Linux, macOS, WSL, and Windows (Git Bash)
+- **Cross-platform**: Linux, macOS (stock bash 3.2) and Windows (Git Bash) tested in CI; WSL2 Ubuntu tested locally
 - **Pure bash + jq**: No additional dependencies
 - **Tested**: `bash tests/run.sh` feeds crafted payloads (xhigh effort, Haiku, legacy shapes, hostile values, worktrees, widths) through the script
 
 ## Quick Install
 
-### Setup via Claude Code (Recommended)
+### Plugin Install (Recommended)
+
+In Claude Code:
+
+```
+/plugin marketplace add phorvicheka/claude-code-statusline
+/plugin install adaptive-statusline@phorvicheka
+/adaptive-statusline:install
+```
+
+Plugins cannot set `statusLine` themselves, so `/adaptive-statusline:install` runs `install.sh`. It asks for the line
+mode, asks before replacing another tool's statusline, and copies the script to `~/.claude/statusline.sh`.
+After `/plugin update`, run `/adaptive-statusline:install` again: the installed copy does not update itself.
+`/adaptive-statusline:configure` hides or shows sections (or just ask Claude), and `/adaptive-statusline:uninstall` removes it.
+
+### Setup via Claude Code Prompt
 
 **Install or update** -- paste this prompt into Claude Code:
 
@@ -32,15 +50,25 @@ Please check https://github.com/phorvicheka/claude-code-statusline, read the REA
 > **Already have the repo locally?** Use:
 > `Please read the README.md in this directory and follow the install steps.`
 
-**Customize elements** -- toggle visibility of any statusline element:
+**Hide or show sections**: ask Claude in plain words, or run the command yourself. Settings are saved to
+`~/.claude/statusline.conf`, so reinstalls and plugin updates keep them.
 
 ```
-In my Claude Code statusline at ~/.claude/statusline.sh, set SHOW_<ELEMENT>=false for: <elements to hide>. Leave all others as true. The toggle flags are at the top of the file.
+hide the cost and rate limit parts of my statusline        # plain request (plugin installed)
+/adaptive-statusline:configure hide cost,rate-limits       # the same, as a slash command
 ```
 
-> Example: `...set SHOW_COST_GROUP=false and SHOW_OUTPUT_STYLE=false for: cost group, output style...`
->
-> Available elements: `MODEL`, `TOKENS`, `GIT`, `FOLDER`, `THINKING`, `EFFORT`, `OUTPUT_STYLE`, `CAVEMAN`, `AGENT`, `ADVISOR`, `VIM_MODE`, `VERSION`, `SESSION_ID`, `SESSION_NAME`, `COST_GROUP`, `RATE_LIMITS`, `WORKTREE`, `PR`, `FAST`, `CACHE`, `SPEND`, `CWD_PATH`, `CLICKABLE_LINKS`
+```bash
+bash ~/.claude/statusline.sh --hide cost,rate-limits   # hide
+bash ~/.claude/statusline.sh --show cost               # show again
+bash ~/.claude/statusline.sh --lines 2                 # 1, 2 or 3 lines
+bash ~/.claude/statusline.sh --list                    # what is on or off
+bash ~/.claude/statusline.sh --reset                   # everything back
+```
+
+> Sections: `model`, `tokens`, `git`, `folder`, `thinking`, `effort`, `output-style`, `caveman`, `agent`,
+> `advisor`, `vim-mode`, `version`, `session-id`, `session-name`, `cost`, `rate-limits`, `worktree`, `pr`, `fast`,
+> `cache`, `spend`, `cwd-path`, `clickable-links`. Changes show on the next refresh; no restart needed.
 
 **Uninstall**:
 
@@ -57,10 +85,11 @@ Please check https://github.com/phorvicheka/claude-code-statusline, read the REA
 cd /path/to/statusline-package
 bash install.sh -y     # recommended: non-interactive, 3-line default, auto-update
 bash install.sh        # interactive: choose line count, confirm overwrites
+bash install.sh -y -l 2  # non-interactive, 2-line mode
 ```
 
 The installer will:
-1. Check dependencies (bash 4+, jq, git; warns if gh is missing)
+1. Check dependencies (bash 3.2+, jq, git)
 2. Back up any existing statusline.sh
 3. Install or update the script to `~/.claude/statusline.sh`
 4. Configure `~/.claude/settings.json`
@@ -86,19 +115,35 @@ chmod +x ~/.claude/statusline.sh
 
 ### Requirements
 
-- **bash** 4.0+
+- **Claude Code CLI** running in a terminal. See [Where It Works](#where-it-works).
+- **bash** 3.2+ (stock macOS `/bin/bash` works; on Windows, Git Bash)
 - **jq** (JSON processor)
 - **git** (for branch info)
-- **gh** (GitHub CLI, optional -- for PR# display)
+
+The PR badge comes from Claude Code's own JSON, so `gh` is not needed.
+
+### Where It Works
+
+The status line is a feature of the Claude Code **CLI in a terminal**. That includes the integrated terminal of
+VS Code, Cursor or JetBrains IDEs, where the JetBrains plugin also runs `claude`. The Claude Code docs do not
+document `statusLine` for the VS Code extension's chat panel, the Desktop app, or claude.ai/code (web, no local
+`~/.claude`), so those are not supported.
+
+The plugin install was tested on Claude Code 2.1.319. Older versions without plugin support can use the script install.
 
 ### Platform Notes
 
-| Platform | Status | Notes |
-|----------|--------|-------|
-| Linux | Full support | Native environment |
-| macOS | Full support | BSD `date`/`stat` fallbacks included |
-| WSL (Ubuntu) | Full support | Handles Windows backslash paths (`C:\Users\...`) sent by Claude Code |
-| Windows (Git Bash / MSYS2) | Full support | GNU coreutils bundled; `stty size` may fail (defaults to 80 cols / compact tier) |
+Every push and PR runs `tests/ci.sh` on all three OSes ([workflow](.github/workflows/test.yml)): shellcheck,
+`bash -n`, and `tests/run.sh`, which feeds crafted Claude Code JSON through the scripts. Run the same check locally
+with `bash tests/ci.sh --fresh`. CI tests the scripts, not a live Claude Code session on each OS. On Windows, 3
+symlink and POSIX-mode cases are skipped, because Git Bash has neither.
+
+| Platform | Status | Tested by | Notes |
+|----------|--------|-----------|-------|
+| Linux | Tested (CI) | CI `ubuntu-latest` | Native environment |
+| WSL (Ubuntu) | Tested locally | `tests/ci.sh` on WSL2 Ubuntu | Handles Windows backslash paths (`C:\Users\...`) sent by Claude Code |
+| macOS | Tested (CI) | CI `macos-latest`, stock `/bin/bash` 3.2 | BSD `date`/`stat`/`grep`, `tail -r` instead of `tac` |
+| Windows | Tested (CI) | CI `windows-latest`, Git Bash | Requires [Git for Windows](https://gitforwindows.org/): Claude Code runs status line commands through Git Bash, and falls back to PowerShell without it, which cannot run this script. The installer writes a `C:/Users/...` path. `stty size` may fail (defaults to 80 cols / compact tier) |
 
 Claude Code may send working directory paths with backslashes on Windows. The statusline normalizes all path separators automatically -- folder names, git operations, and settings lookups all work regardless of separator style.
 
@@ -106,7 +151,7 @@ Claude Code may send working directory paths with backslashes on Windows. The st
 
 ## Configuration
 
-See [Configuration Guide](docs/configuration.md) for line count, feature toggles, sizing, and width tiers.
+Hide sections and set the line mode with `bash ~/.claude/statusline.sh --hide/--show/--lines` (see [Quick Install](#quick-install)). See the [Configuration Guide](docs/configuration.md) for the settings file, sizing and width tiers.
 
 ## Statusline Anatomy
 
@@ -118,7 +163,7 @@ Render time targets **< 200ms warm**. Caches git state (30s; 300s on WSL2 `/mnt/
 
 ## Known Limitations
 
-See [Known Limitations](docs/known-limitations.md) for clickable link support and rate limit data freshness.
+See [Known Limitations](docs/known-limitations.md) for clickable link support, rate limit data freshness, and the auto-compact limit.
 
 ## Troubleshooting
 
@@ -164,3 +209,7 @@ See [Contributing: Adding New Elements](docs/contributing.md). Run `bash tests/r
 - [Claude Code Statusline Documentation](https://code.claude.com/docs/en/statusline)
 - [isaacaudet/claude-code-statusline](https://github.com/isaacaudet/claude-code-statusline)
 - [sirmalloc/ccstatusline](https://github.com/sirmalloc/ccstatusline)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

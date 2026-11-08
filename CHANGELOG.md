@@ -1,9 +1,70 @@
 # Changelog
 
-All notable changes to this statusline. The project has no tagged releases; entries are grouped by date.
+All notable changes to this statusline. From 2.0.0, versions follow `version` in `.claude-plugin/plugin.json`
+(bump it with every release, see [docs/contributing.md](docs/contributing.md)); earlier entries are grouped by date.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] - 2026-10-04
+## [2.0.0] - 2026-11-08
+
+### Added
+
+- **MIT license.** The repo had no license, so reuse was legally all-rights-reserved.
+- **Claude Code plugin.** `.claude-plugin/` makes the repo its own marketplace (`phorvicheka`) with the plugin
+  `adaptive-statusline`. Skills `/adaptive-statusline:install` and `:uninstall` run the bundled scripts, because plugins
+  cannot set `statusLine`. The script still lands at `~/.claude/statusline.sh`, since the plugin directory changes
+  on every update.
+- **Hide sections with one command; settings survive updates.** `bash ~/.claude/statusline.sh --hide cost,rate-limits`
+  (also `--show`, `--lines`, `--list`, `--reset`) writes `~/.claude/statusline.conf`, which reinstalls and plugin
+  updates never touch. Before, hiding meant editing `SHOW_*` lines in the installed script, and every update erased
+  them. The file is parsed strictly, never sourced. The plugin skill `/adaptive-statusline:configure` runs these
+  commands, and Claude also picks it for plain requests ("hide the cost section of my statusline").
+- `install.sh -l 1|2|3` picks the line mode without a prompt. `uninstall.sh -y` runs without a prompt and restores
+  the newest backup. Both are needed where there is no TTY, such as Claude's Bash tool.
+
+### Fixed
+
+- **macOS: stock `/bin/bash` 3.2 and BSD tools.** `${var,,}` (bash 4+) is replaced by a fork-free `_lower`
+  helper. The transcript reader no longer uses `grep -P` or `tac`, which macOS lacks; it uses `grep -oE` + `sed -E`
+  and `tail -r`. Before, the output style label and the advisor model hit "bad substitution", and `/effort`,
+  `/advisor` and the `/rename` title were silently missing on macOS.
+- **False `wt:` row for a repo reached through a symlink.** `_detect_worktree` compared git's symlink-resolved
+  `--git-dir` with a logical `pwd`, so a plain repo under `/tmp` or `/var` on macOS, or under any symlinked
+  directory, showed as a linked worktree. Both sides now use `pwd -P`. Found by the macOS CI job.
+- **Windows: settings path.** On Git Bash the installer writes `bash C:/Users/.../statusline.sh` (via `cygpath -m`),
+  the form the Claude Code docs ask for, instead of the MSYS path `/c/Users/...`.
+- `.gitattributes` keeps `*.sh` at LF on Windows checkouts.
+- **Uninstall after an update left the statusline in place.** Every re-install backed up our own previous script,
+  and uninstall "restored" that copy. Now install backs up only a foreign script, and uninstall skips and deletes
+  backups of our own versions (header marker `Claude Code Status Line v2`). Covered in `tests/run.sh`.
+
+### Changed
+
+- **CI on Linux, macOS and Windows.** `.github/workflows/test.yml` runs `tests/ci.sh` (shellcheck, `bash -n`,
+  `tests/run.sh`) on `ubuntu-latest`, `macos-latest` under `/bin/bash` 3.2, and `windows-latest` under Git Bash.
+  `bash tests/ci.sh --fresh` runs the same check locally on a fresh clone of HEAD.
+- `tests/run.sh`: `SUT_BASH` picks the interpreter for the shipped scripts; a static portability lint; BSD `stat`
+  and macOS locale fallbacks; Windows-only SKIPs (symlinks, POSIX modes) are counted and printed, never passed.
+- **README screenshot re-rendered** from the current `statusline.sh` (Opus 5.5, v2.1.319, 3-line layout, auto-compact
+  limit `⟲400k`, PR badge, 5h/7d bars, prompt cache, settings and output groups). The old one showed the April layout (Sonnet 4.6, v2.1.97).
+- Requirements: bash 3.2+ (was 4+); `gh` dropped from the list (the PR badge uses Claude Code's JSON).
+- `.claude/settings.local.json` and `.codex` are no longer tracked; `.gitignore` added (also ignores `.tmp/`).
+  Before, a personal permission allowlist was copied into every plugin install.
+- `docs/contributing.md`: plugin updates need a `version` bump in `.claude-plugin/plugin.json`.
+
+## 2026-10-04 (before versioning)
+
+### Added
+
+- **Auto-compact limit in the context segment.** When `autoCompactWindow` is below the model window, the bar
+  and % are measured against it: `█████████░ 99% 399k/⟲400k · 1.0m max`. Before, `used_percentage` was
+  measured against the full window, so a 1M model with a 400k limit showed 40% when compaction was close.
+  - Source, in order: env `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then the highest-priority settings file that sets
+    `modelSettings.<model>.autoCompactWindow` or top-level `autoCompactWindow` (per-model wins in that file).
+    The value is clamped to 100k–1M, and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers it.
+  - Not applied when `autoCompactEnabled: false`, `DISABLE_AUTO_COMPACT`/`DISABLE_COMPACT` is set, the value is
+    `"auto"`, or `current_usage` is missing (only cumulative totals are available then).
+  - Tiers under 100 columns drop `· 1.0m max`. `⟲` always shows, so `/400k` is never read as the model window.
+  - The settings cache file prefix is now `settings3-`.
 
 ### Changed
 

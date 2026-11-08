@@ -22,12 +22,17 @@ REFRESH_INTERVAL="${STATUSLINE_REFRESH_INTERVAL:-60}"
 
 # Flags
 AUTO_YES=false
-while getopts "y" opt; do
+LINES_ARG=""
+while getopts "yl:" opt; do
     case "$opt" in
         y) AUTO_YES=true ;;
-        *) echo "Usage: install.sh [-y]" >&2; exit 1 ;;
+        l) LINES_ARG="$OPTARG" ;;
+        *) echo "Usage: install.sh [-y] [-l 1|2|3]" >&2; exit 1 ;;
     esac
 done
+if [[ -n "$LINES_ARG" && ! "$LINES_ARG" =~ ^[123]$ ]]; then
+    echo "install.sh: -l must be 1, 2 or 3 (got '$LINES_ARG')" >&2; exit 1
+fi
 shift $((OPTIND - 1))
 
 # Detect install vs update
@@ -67,10 +72,9 @@ if (( ${#missing[@]} > 0 )); then
     exit 1
 fi
 
-# Check bash version >= 4
-bash_ver="${BASH_VERSINFO[0]}"
-if (( bash_ver < 4 )); then
-    warn "Bash version ${BASH_VERSION} detected. Version 4+ recommended."
+# bash 3.2 (macOS /bin/bash) is enough; older is untested.
+if (( BASH_VERSINFO[0] < 3 || (BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] < 2) )); then
+    warn "Bash version ${BASH_VERSION} detected. Version 3.2+ required."
 fi
 
 ok "Dependencies satisfied (bash ${BASH_VERSION}, jq $(jq --version 2>&1), git)"
@@ -80,7 +84,9 @@ ok "Dependencies satisfied (bash ${BASH_VERSION}, jq $(jq --version 2>&1), git)"
 # ------------------------------------------------------------------
 # 2. Choose line count
 # ------------------------------------------------------------------
-if [[ "$AUTO_YES" == true ]]; then
+if [[ -n "$LINES_ARG" ]]; then
+    line_choice="$LINES_ARG"
+elif [[ "$AUTO_YES" == true ]]; then
     line_choice=3
     ok "Auto mode: using default 3-line mode"
 else
@@ -109,7 +115,8 @@ mkdir -p "$CLAUDE_DIR"
 # ------------------------------------------------------------------
 # 4. Backup existing statusline
 # ------------------------------------------------------------------
-if [[ -f "$TARGET" ]]; then
+# Back up only a foreign script; an older copy of ours needs no backup (uninstall would "restore" it).
+if [[ -f "$TARGET" ]] && ! head -n 5 -- "$TARGET" | grep -q 'Claude Code Status Line v2'; then
     backup="${TARGET}.bak.$(date +%s)"
     cp "$TARGET" "$backup"
     ok "Backed up existing statusline to ${backup}"
@@ -132,6 +139,23 @@ fi
 
 ok "Installed statusline.sh to ${TARGET}"
 
+# The line mode lives in ~/.claude/statusline.conf, which overrides the script default above.
+# Record an explicit choice there; a plain -y update keeps whatever the user saved.
+if [[ -n "$LINES_ARG" || "$AUTO_YES" != true ]]; then
+    if HOME="$HOME" bash "$TARGET" --lines "$line_choice" >/dev/null; then
+        ok "Saved ${line_choice}-line mode to ${CLAUDE_DIR}/statusline.conf"
+    else
+        warn "Could not save the line mode to ${CLAUDE_DIR}/statusline.conf"
+    fi
+fi
+
+# Path written into settings.json. On Windows, Claude Code runs the command through Git Bash and the docs
+# ask for forward-slash Windows paths (C:/Users/...), not MSYS paths (/c/Users/...).
+CMD_TARGET="$TARGET"
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && CMD_TARGET="$(cygpath -m "$TARGET")" ;;
+esac
+
 # ------------------------------------------------------------------
 # 6. Configure settings.json
 # ------------------------------------------------------------------
@@ -150,7 +174,7 @@ if [[ -f "$SETTINGS" ]]; then
             fi
             if [[ "$overwrite" =~ ^[Yy] ]]; then
                 tmp=$(mktemp)
-                jq '.statusLine = {"type": "command", "command": "bash '"$TARGET"'"}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
+                jq '.statusLine = {"type": "command", "command": "bash '"$CMD_TARGET"'"}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
                 ok "Updated statusLine in settings.json"
             else
                 warn "Skipped settings.json update"
@@ -158,7 +182,7 @@ if [[ -f "$SETTINGS" ]]; then
         fi
     else
         tmp=$(mktemp)
-        jq '. + {"statusLine": {"type": "command", "command": "bash '"$TARGET"'"}}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
+        jq '. + {"statusLine": {"type": "command", "command": "bash '"$CMD_TARGET"'"}}' "$SETTINGS" > "$tmp" && [[ -s "$tmp" ]] && cat "$tmp" > "$SETTINGS"; rm -f "$tmp"
         ok "Added statusLine config to settings.json"
     fi
 else
@@ -166,7 +190,7 @@ else
 {
   "statusLine": {
     "type": "command",
-    "command": "bash ${TARGET}"
+    "command": "bash ${CMD_TARGET}"
   }
 }
 EOF

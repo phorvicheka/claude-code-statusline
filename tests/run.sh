@@ -6,6 +6,7 @@
 #
 #   bash tests/run.sh          # run all
 #   bash tests/run.sh -v       # print each rendered output
+#   SUT_BASH=/bin/bash bash tests/run.sh   # run the scripts under test with another bash (macOS 3.2)
 #
 # Requires: bash 4+, jq, git.
 
@@ -14,8 +15,18 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${STATUSLINE_UNDER_TEST:-$ROOT/statusline.sh}"
 VERBOSE=false
 [[ "${1:-}" == "-v" ]] && VERBOSE=true
+SUT_BASH="${SUT_BASH:-bash}"   # interpreter for statusline.sh / install.sh / uninstall.sh
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) IS_WIN=true ;; *) IS_WIN=false ;; esac
+# Any UTF-8 locale for character counting: C.utf8 on Linux, en_US.UTF-8 on macOS.
+UTF8_LOCALE=$(locale -a 2>/dev/null | grep -iE '^(c|en_us)\.utf-?8$' | head -1)
 
-SANDBOX="$(mktemp -d)"
+# Short, symlink-free sandbox: macOS $TMPDIR is long (/var/folders/...) and /var is a symlink to /private/var.
+# Row-count tests assume a short path; Windows %TEMP% is long, the Actions runner temp (D:\a\_temp) is not.
+TMP_BASE=/tmp
+$IS_WIN && [[ -n "${RUNNER_TEMP:-}" ]] && TMP_BASE="$(cygpath -u "$RUNNER_TEMP")"
+SANDBOX="$(cd "$(mktemp -d "$TMP_BASE/sl.XXXXXX")" && pwd -P)"
+# On Windows, Claude Code sends Windows paths and git prints C:/... ones: use that form throughout.
+$IS_WIN && SANDBOX="$(cygpath -m "$SANDBOX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 export HOME="$SANDBOX/home"
 mkdir -p "$HOME/.claude" "$SANDBOX/cache"
@@ -26,7 +37,8 @@ unset TERM_PROGRAM WT_SESSION KITTY_PID FORCE_HYPERLINK COLUMNS TERM_WIDTH
 cat > "$HOME/.claude/settings.json" <<'EOF'
 {
   "effortLevel": "high",
-  "modelSettings": { "claude-sonnet-5-5": { "effortLevel": "xhigh" } },
+  "modelSettings": { "claude-sonnet-5-5": { "effortLevel": "xhigh" },
+                     "claude-opus-5-5":   { "autoCompactWindow": 400000 } },
   "advisorModel": "opus"
 }
 EOF
@@ -68,11 +80,13 @@ render() {
     json=$(base_json | jq -c "$filter")
     LAST_ERR="$SANDBOX/stderr"
     LAST_OUT=$(env "$@" HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" \
-        TERM_WIDTH="${TERM_WIDTH_OVERRIDE:-160}" bash "$SCRIPT" <<<"$json" 2>"$LAST_ERR" | strip)
+        TERM_WIDTH="${TERM_WIDTH_OVERRIDE:-160}" "$SUT_BASH" "$SCRIPT" <<<"$json" 2>"$LAST_ERR" | strip)
     $VERBOSE && printf '    ┌─\n%s\n    └─\n' "$(sed 's/^/    │ /' <<<"$LAST_OUT")"
 }
 
 ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
+SKIP=0
+skip() { SKIP=$((SKIP+1)); printf '  SKIP %s (%s)\n' "$1" "$2"; }
 bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n         %s\n' "$1" "$2"; printf '%s\n' "$LAST_OUT" | sed 's/^/         | /'; }
 
 has()  { [[ "$LAST_OUT" == *"$2"* ]] && ok "$1" || bad "$1" "expected to contain: $2"; }
@@ -104,15 +118,15 @@ render '.rate_limits={five_hour:{used_percentage:38,resets_at:4102444800},seven_
 has   "both windows present render both" "5h "
 has   "7d renders when present" "7d "
 render '.rate_limits={seven_day:{used_percentage:18,resets_at:4102444800}}'
-hasnt "5h hidden when 7d loaded but no 5h window" "5h"
+hasnt "5h hidden when 7d loaded but no 5h window" "5h "
 has   "7d still shown" "7d "
 render '.'
 has   "no rate_limits yet keeps 5h placeholder" "5h --"
 has   "no rate_limits yet keeps 7d placeholder" "7d --"
 render '.rate_limits={five_hour:{used_percentage:5,resets_at:4102444800}}'
-hasnt "7d hidden when 5h loaded but no 7d window" "7d"
+hasnt "7d hidden when 5h loaded but no 7d window" "7d "
 render '.rate_limits={spend_limit:{used_percentage:5,used_usd:1,limit_usd:20,period:"month"}}'
-hasnt "7d hidden when only spend limit present" "7d"
+hasnt "7d hidden when only spend limit present" "7d "
 
 echo "── legacy payloads (older Claude Code) ──"
 render 'del(.effort,.thinking,.fast_mode) | .effort_level="medium"'
@@ -132,7 +146,7 @@ render '.session_name="x$(touch '"$SANDBOX"'/pwned)y'"'"'; echo z"'
 [[ ! -e "$SANDBOX/pwned" ]] && ok "hostile session_name is not executed" || bad "hostile session_name is not executed" "pwned file created"
 render '.thinking="$(touch '"$SANDBOX"'/pwned2)"'
 [[ ! -e "$SANDBOX/pwned2" ]] && ok "hostile scalar thinking is not executed" || bad "hostile scalar thinking is not executed" "pwned2 file created"
-LAST_OUT=$(printf 'not json' | HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" TERM_WIDTH=160 bash "$SCRIPT" 2>/dev/null | strip)
+LAST_OUT=$(printf 'not json' | HOME="$HOME" STATUSLINE_CACHE_DIR="$SANDBOX/cache" TERM_WIDTH=160 "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
 [[ -n "$LAST_OUT" ]] && ok "garbage stdin still prints something" || bad "garbage stdin still prints something" "empty output"
 
 echo "── /rename shows at once (custom-title from transcript beats stale JSON) ──"
@@ -198,7 +212,7 @@ render ".prompt_cache={warm:false,caching_observed:true,ttl:\"5m\",expires_at:nu
 has   "cold prompt cache shown as cold" "cold"
 render '.';                hasnt "no prompt_cache → no cache badge" "cache:"
 render ".rate_limits={five_hour:{used_percentage:71,resets_at:$((NOW+3600))},seven_day:{used_percentage:76,resets_at:$((NOW+86400))}}"
-has   "5h/7d rate limits still render" "5h"
+has   "5h/7d rate limits still render" "5h "
 render ".rate_limits.spend_limit={used_percentage:24,resets_at:$((NOW+86400*3)),used_usd:12.5,limit_usd:50,period:\"weekly\"}"
 has   "spend_limit renders" "spend"
 has   "spend_limit shows 24%" "24%"
@@ -219,7 +233,7 @@ render '.'
 has   "cwd shown after user@host" "@"
 has   "cwd path shown" "$REPO"
 render ".cwd=\"$WT\" | .workspace.current_dir=\"$WT\" | .workspace.git_worktree=\"wt-feature\""
-n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l)
+n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l | tr -d " ")
 [[ "$n" == "1" ]] && ok "worktree path not duplicated by cwd on host row" || bad "worktree path not duplicated by cwd on host row" "path appears $n times"
 
 echo "── cwd drift: anchor + ▸marker, stable split ──"
@@ -227,7 +241,9 @@ MEM="$REPO/.claude/memory"; mkdir -p "$MEM"
 at() { printf '.cwd="%s" | .workspace.current_dir="%s"' "$1" "$1"; }   # at <dir> → jq filter
 count() { grep -c -- "$1" <<<"$LAST_OUT" || true; }
 # widest rendered row among those containing $1 (UTF-8 aware; emoji margin covered by _FLEX_MARGIN)
-rowmax() { ( LC_ALL=C.utf8; m=0; while IFS= read -r l; do [[ "$l" == *"$1"* ]] && (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
+# Widest output row in characters. Not awk length(): macOS awk counts bytes, so █ ⟲ … would inflate it.
+maxwidth() { ( LC_ALL="${UTF8_LOCALE:-C.UTF-8}"; m=0; while IFS= read -r l; do (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
+rowmax() { ( LC_ALL="${UTF8_LOCALE:-C.UTF-8}"; m=0; while IFS= read -r l; do [[ "$l" == *"$1"* ]] && (( ${#l} > m )) && m=${#l}; done <<<"$LAST_OUT"; echo "$m" ); }
 
 render "$(at "$MEM")"
 has   "drift: L1 shows project root + ▸subdir"           "main-repo ▸.claude/memory"
@@ -295,7 +311,7 @@ render "$(at "$SUB") | .workspace.git_worktree=\"wt-feature\""
 has   "worktree subdir: wt row shows the worktree ROOT"  "path:$WT"
 hasnt "worktree subdir: wt row does not show the subdir" "path:$SUB"
 has   "worktree subdir: L1 = worktree dir + ▸subdir"     "wt-feature ▸src/api"
-n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l)
+n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l | tr -d " ")
 [[ "$n" == "1" ]] && ok "worktree subdir: root path printed once (host row deduped)" || bad "worktree subdir: root path printed once" "appears $n times"
 # Captured real payload shape: launched in api-server, cwd inside its .worktrees/ dir.
 API="$SANDBOX/ghost/api-server"; GW="$API/.worktrees/feature-2026-04-27-rbac-permissions-authz"
@@ -303,8 +319,57 @@ API="$SANDBOX/ghost/api-server"; GW="$API/.worktrees/feature-2026-04-27-rbac-per
 TERM_WIDTH_OVERRIDE=225 render ".cwd=\"$GW\" | .workspace.current_dir=\"$GW\" | .workspace.project_dir=\"$API\" | .workspace.git_worktree=\"feature-2026-04-27-rbac-permissions-authz\""
 hasnt "real worktree payload: no marker (cwd is the worktree root)" "▸"
 [[ "$(head -1 <<<"$LAST_OUT")" == *"| feature-2026-04-27-rbac-permissions-authz" ]] && ok "real worktree payload: L1 shows the worktree dir" || bad "real worktree payload: L1 shows the worktree dir" "L1 = $(head -1 <<<"$LAST_OUT")"
-n=$(grep -o "$GW" <<<"$LAST_OUT" | wc -l)
+n=$(grep -o "$GW" <<<"$LAST_OUT" | wc -l | tr -d " ")
 [[ "$n" == "1" ]] && ok "real worktree payload: path printed once" || bad "real worktree payload: path printed once" "appears $n times"
+
+echo "── auto-compact limit (autoCompactWindow) ──"
+OPUS='.model.id="claude-opus-5-5[1m]" | .model.display_name="Opus 5.5 (1M context)"'
+render "$OPUS"
+has   "per-model window: rescaled % and ⟲ limit" "25% 100k/⟲400k · 1.0m max"
+render '.'
+hasnt "unset for this model: today's display" "⟲"
+has   "unset for this model: today's display" "10% 100k/1.0m"
+render "$OPUS | .context_window.context_window_size=200000"
+hasnt "window not below model window: no rescale" "⟲"
+TERM_WIDTH_OVERRIDE=80 render "$OPUS"
+has   "compact tier keeps ⟲, drops the model-size tail" "100k/⟲400k"
+hasnt "compact tier keeps ⟲, drops the model-size tail" "1.0m max"
+TERM_WIDTH_OVERRIDE=60 render "$OPUS"
+has   "narrow tier keeps ⟲" "/⟲400k"
+render "$OPUS | .context_window.current_usage=null"
+hasnt "no current_usage (cumulative totals only): no rescale" "⟲"
+render "$OPUS" CLAUDE_CODE_AUTO_COMPACT_WINDOW=200k
+has   "env CLAUDE_CODE_AUTO_COMPACT_WINDOW beats settings" "50% 100k/⟲200k"
+render "$OPUS" CLAUDE_CODE_AUTO_COMPACT_WINDOW=50000
+has   "env value below 100k is clamped like CC" "/⟲100k"
+render "$OPUS" CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50
+has   "PCT override lowers the trigger point" "/⟲200k"
+render "$OPUS" DISABLE_AUTO_COMPACT=1
+hasnt "DISABLE_AUTO_COMPACT=1: no rescale" "⟲"
+render "$OPUS" DISABLE_COMPACT=1
+hasnt "DISABLE_COMPACT=1: no rescale" "⟲"
+render "$OPUS" CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=08
+has   "PCT override with leading zero is decimal, not octal" "/⟲32k"
+quiet "PCT override with leading zero: no stderr"
+# Project file sets top-level only: it is the highest-priority file setting either key, so it decides.
+ACP="$SANDBOX/acproj"; mkdir -p "$ACP/.claude"
+echo '{"autoCompactWindow": 327000}' > "$ACP/.claude/settings.json"
+render "$OPUS | .cwd=\"$ACP\" | .workspace.current_dir=\"$ACP\" | .workspace.project_dir=\"$ACP\""
+has   "project top-level beats user per-model (highest file decides)" "/⟲327k"
+render ".cwd=\"$ACP\" | .workspace.current_dir=\"$ACP\" | .workspace.project_dir=\"$ACP\""
+has   "top-level fallback for a model without per-model entry" "/⟲327k"
+ACS="$SANDBOX/acsame"; mkdir -p "$ACS/.claude"
+echo '{"autoCompactWindow": 327000, "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 250000}}}' > "$ACS/.claude/settings.json"
+render "$OPUS | .cwd=\"$ACS\" | .workspace.current_dir=\"$ACS\" | .workspace.project_dir=\"$ACS\""
+has   "per-model beats top-level in the same file" "/⟲250k"
+# Fresh dir: settings are cached per cwd+model for SETTINGS_CACHE_TTL.
+ACO="$SANDBOX/acoff"; mkdir -p "$ACO/.claude"
+echo '{"autoCompactWindow": 327000, "autoCompactEnabled": false}' > "$ACO/.claude/settings.json"
+render ".cwd=\"$ACO\" | .workspace.current_dir=\"$ACO\" | .workspace.project_dir=\"$ACO\""
+hasnt "autoCompactEnabled:false: no rescale" "⟲"
+TERM_WIDTH_OVERRIDE=100 render "$OPUS"
+maxw=$(maxwidth)
+(( maxw <= 100 )) && ok "rescaled tail fits at 100 cols (max $maxw)" || bad "rescaled tail fits at 100 cols" "max line = $maxw"
 
 echo "── width ──"
 TERM_WIDTH_OVERRIDE=60 render '.'
@@ -312,9 +377,9 @@ nlines "narrow tier forces a single line" 1
 TERM_WIDTH_OVERRIDE=160 render '.'
 nlines "full tier renders 3 lines (non-worktree)" 3
 # No visible line may exceed TERM_WIDTH (wide glyph margin allowed: emoji count 2 cols)
-maxw=$(awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
+maxw=$(maxwidth)
 (( maxw <= 160 )) && ok "no line wider than TERM_WIDTH=160 (max $maxw)" || bad "no line wider than TERM_WIDTH=160" "max line = $maxw"
-LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" bash "$SCRIPT" 2>/dev/null | strip)
+LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
 # At 100 columns user@host:path cannot share a row with settings/output: it splits onto
 # its own row (4 rows) instead of dropping the path. At the default width it would be 3.
 nlines "COLUMNS env is honoured when TERM_WIDTH unset (100 cols: host row splits, 4 rows)" 4
@@ -325,16 +390,17 @@ sec_render() {  # sec_render <cache-dir> [ENV=val ...]: render with an explicit 
     local cdir="$1"; shift
     LAST_ERR="$SANDBOX/stderr"
     LAST_OUT=$(base_json | env "$@" HOME="$HOME" STATUSLINE_CACHE_DIR="$cdir" TERM_WIDTH=160 \
-        bash "$SCRIPT" 2>"$LAST_ERR" | strip)
+        "$SUT_BASH" "$SCRIPT" 2>"$LAST_ERR" | strip)
 }
 none() { [[ ! -e "$2" ]] && ok "$1" || bad "$1" "$2 exists"; }
 
 # 1. Planted cache files carrying shell syntax must never execute.
 C1="$SEC/c1"; mkdir -p "$C1"; chmod 700 "$C1"
-sec_render "$C1"                                   # warm: creates settings2-*, git2-*
+sec_render "$C1"                                   # warm: creates settings3-*, git2-*
 EV="\$(touch $SEC/pwn-settings)"
-for f in "$C1"/settings2-*; do
-    printf 'SETTINGS_EFFORT_LEVEL=%s\nSETTINGS_ADVISOR_MODEL=a[%s]\nBOGUS=%s\n' "$EV" "$EV" "$EV" > "$f"
+for f in "$C1"/settings3-*; do
+    [[ -e "$f" ]] || { bad "settings cache file exists to plant" "no $C1/settings3-*"; continue; }
+    printf 'SETTINGS_EFFORT_LEVEL=%s\nSETTINGS_ADVISOR_MODEL=a[%s]\nSETTINGS_COMPACT_WINDOW=a[%s]\nBOGUS=%s\n' "$EV" "$EV" "$EV" "$EV" > "$f"
 done
 sec_render "$C1"
 none "planted settings cache is not executed" "$SEC/pwn-settings"
@@ -345,19 +411,23 @@ has  "still renders with a hostile git cache" "main-repo"
 printf '%s\t%s' 'x[$(touch '"$SEC"'/pwn-tx)]' '$(touch '"$SEC"'/pwn-tx)' > "$C1/tx-advisor-nosession"
 sec_render "$C1" 
 none "planted transcript cache is not evaluated" "$SEC/pwn-tx"
-LAST_OUT=$(base_json | env -u TERM_WIDTH -u COLUMNS HOME="$HOME" STATUSLINE_CACHE_DIR="$C1" SEC="$SEC" C1="$C1" SCRIPT="$SCRIPT" \
-    bash -c 'printf "%s" "x[\$(touch $SEC/pwn-width)]" > "$C1/width-$$"; bash "$SCRIPT"; true' 2>/dev/null | strip)
+LAST_OUT=$(base_json | env -u TERM_WIDTH -u COLUMNS HOME="$HOME" STATUSLINE_CACHE_DIR="$C1" SEC="$SEC" C1="$C1" SCRIPT="$SCRIPT" SUT_BASH="$SUT_BASH" \
+    "$SUT_BASH" -c 'printf "%s" "x[\$(touch $SEC/pwn-width)]" > "$C1/width-$$"; "$SUT_BASH" "$SCRIPT"; true' 2>/dev/null | strip)
 none "planted width cache is not evaluated" "$SEC/pwn-width"
 [[ -n "$LAST_OUT" ]] && ok "still renders with a hostile width cache" || bad "still renders with a hostile width cache" "empty output"
 
 # 2. A symlink planted at a cache path must not be followed by our writes.
+# Git Bash's ln -s copies instead of linking, so cases 2-3 cannot be set up there.
+if $IS_WIN; then
+    skip "symlink cases (2, 3)" "Git Bash ln -s copies"
+else
 C2="$SEC/c2"; mkdir -p "$C2"; chmod 700 "$C2"
 VICTIM="$SEC/victim"; printf 'precious' > "$VICTIM"
 sec_render "$C2"
-for f in "$C2"/settings2-* "$C2"/git2-*; do rm -f "$f"; ln -s "$VICTIM" "$f"; done
+for f in "$C2"/settings3-* "$C2"/git2-*; do rm -f "$f"; ln -s "$VICTIM" "$f"; done
 sec_render "$C2"
 [[ "$(cat "$VICTIM")" == "precious" ]] && ok "symlink at cache path: target untouched" || bad "symlink at cache path: target untouched" "victim = $(cat "$VICTIM")"
-n=0; for f in "$C2"/settings2-* "$C2"/git2-*; do [[ -L "$f" ]] && n=$((n+1)); done
+n=0; for f in "$C2"/settings3-* "$C2"/git2-*; do [[ -L "$f" ]] && n=$((n+1)); done
 (( n == 0 )) && ok "symlinks at cache paths are replaced by regular files" || bad "symlinks at cache paths are replaced by regular files" "$n symlinks left"
 has  "renders normally after symlink replaced" "◉ xhigh"
 
@@ -366,14 +436,107 @@ REAL="$SEC/real-root"; mkdir -p "$REAL"; ln -s "$REAL" "$SEC/link-root"
 sec_render "$SEC/link-root"
 has  "symlinked cache root: still renders" "◉ xhigh"
 [[ -z "$(ls -A "$REAL")" ]] && ok "symlinked cache root: nothing written through it" || bad "symlinked cache root: nothing written through it" "$(ls "$REAL")"
+fi
 
 # 4. Default location: $XDG_RUNTIME_DIR/claude-statusline, created 0700.
 XR="$SEC/xdg"; mkdir -p "$XR"; chmod 700 "$XR"
-LAST_OUT=$(base_json | env -u STATUSLINE_CACHE_DIR XDG_RUNTIME_DIR="$XR" HOME="$HOME" TERM_WIDTH=160 bash "$SCRIPT" 2>/dev/null | strip)
-mode=$(stat -c %a "$XR/claude-statusline" 2>/dev/null || echo none)
-[[ "$mode" == "700" ]] && ok "default cache dir is created 0700 under XDG_RUNTIME_DIR" || bad "default cache dir is created 0700 under XDG_RUNTIME_DIR" "mode=$mode"
+LAST_OUT=$(base_json | env -u STATUSLINE_CACHE_DIR XDG_RUNTIME_DIR="$XR" HOME="$HOME" TERM_WIDTH=160 "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
+mode=$(stat -c %a "$XR/claude-statusline" 2>/dev/null || stat -f %Lp "$XR/claude-statusline" 2>/dev/null || echo none)
+if $IS_WIN; then
+    skip "default cache dir is created 0700" "NTFS has no POSIX modes"
+else
+    [[ "$mode" == "700" ]] && ok "default cache dir is created 0700 under XDG_RUNTIME_DIR" || bad "default cache dir is created 0700 under XDG_RUNTIME_DIR" "mode=$mode"
+fi
 [[ -n "$(ls -A "$XR/claude-statusline" 2>/dev/null)" ]] && ok "default cache dir is actually used" || bad "default cache dir is actually used" "empty"
 
+
+echo "── repo reached through a symlinked path is not a worktree ──"
+if $IS_WIN; then
+    skip "symlinked repo path" "Git Bash ln -s copies"
+else
+    ln -s "$SANDBOX/proj" "$SANDBOX/proj-link"
+    render "$(at "$SANDBOX/proj-link/main-repo/.claude/memory") | del(.workspace)"
+    hasnt "symlinked repo path: no worktree row" "wt: name:"
+fi
+
+echo "── settings file + CLI (--hide/--show/--lines/--reset) ──"
+cli() { HOME="$HOME" "$SUT_BASH" "$SCRIPT" "$@" </dev/null >/dev/null 2>&1; }
+CONF="$HOME/.claude/statusline.conf"
+cli --hide cost,pr
+render '.pr={number:4,url:"u",review_state:"approved"}'
+hasnt "--hide cost: cost group gone" "cost:"
+hasnt "--hide pr: PR badge gone" "PR #4"
+has   "--hide: other sections stay" "5h "
+cli --show pr
+render '.pr={number:4,url:"u",review_state:"approved"}'
+has   "--show pr: PR badge back" "PR #4"
+hasnt "--show pr: cost still hidden" "cost:"
+cli --hide cost
+[[ "$(grep -c '^SHOW_COST_GROUP=false$' "$CONF")" == 1 ]] && ok "re-hide does not duplicate" || bad "re-hide does not duplicate" "$(cat "$CONF")"
+cli --lines 1; render '.'
+nlines "--lines 1 gives one row" 1
+render '.' STATUSLINE_LINES=3
+nlines "env STATUSLINE_LINES beats the settings file" 3
+cli --hide bogus && bad "unknown section rejected" "exit 0" || ok "unknown section rejected"
+cli --lines 7 && bad "--lines 7 rejected" "exit 0" || ok "--lines 7 rejected"
+cli --reset; render '.'
+has   "--reset: cost back" "cost:"
+nlines "--reset: default 3 rows" 3
+printf 'SHOW_COST_GROUP=$(touch %s/pwn-conf)\nSTATUSLINE_LINES=1;touch %s/pwn-conf\nPATH=/nowhere\nSHOW_NOPE=false\nSHOW_PR=false\r\n' "$SANDBOX" "$SANDBOX" > "$CONF"
+render '.pr={number:4,url:"u",review_state:"approved"}'
+none  "hostile settings file is not executed" "$SANDBOX/pwn-conf"
+has   "hostile settings file: still renders" "cost:"
+hasnt "CRLF settings line still applies" "PR #4"
+nlines "invalid STATUSLINE_LINES ignored" 3
+rm -f "$CONF"
+
+echo "── custom output style label is lowercased (portable _lower, no \${x,,}) ──"
+render '.output_style.name="My-Custom_Style2"'
+has   "custom output style lowercased" "my-custom_style2"
+
+echo "== portability lint (static: macOS bash 3.2, BSD grep/sed, no tac) =="
+# Static evidence only; the macOS CI job runs the scripts under /bin/bash 3.2 for real.
+lint() {  # lint <name> <ERE>: fail if any non-comment line of the shipped scripts matches
+    local hits
+    hits=$(grep -nE -- "$2" "$ROOT/statusline.sh" "$ROOT/install.sh" "$ROOT/uninstall.sh" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+    [[ -z "$hits" ]] && ok "no $1" || { FAIL=$((FAIL+1)); printf '  FAIL no %s\n%s\n' "$1" "$(sed 's/^/         | /' <<<"$hits")"; }
+}
+lint 'bash-4 case conversion ${x,,} ${x^^}' '\$\{[A-Za-z_][A-Za-z0-9_]*(,,?|\^\^?)\}'
+lint 'associative/global/nameref declare' '(declare|local|typeset) +-[a-zA-Z]*[Agn]'
+lint 'mapfile/readarray' '\b(mapfile|readarray)\b'
+lint '[[ -v ]] tests' '\[\[ +-v '
+lint 'negative substring length ${s:0:-1}' '\$\{[A-Za-z_][A-Za-z0-9_]*:[^}]*:-[0-9]'
+lint 'grep -P (BSD grep has none)' 'grep +-[a-zA-Z]*P'
+lint 'unguarded tac (macOS has none)' '(^|[|;&]|\$\() *tac '
+lint 'sed -r (BSD sed needs -E)' 'sed +-[a-zA-Z]*r'
+
+echo "== installers =="
+# Each case gets a fresh HOME; installers run without a TTY, as under Claude's Bash tool.
+inst() { HOME="$IH" XDG_RUNTIME_DIR='' STATUSLINE_REFRESH_INTERVAL=0 "$SUT_BASH" "$ROOT/install.sh" "$@" </dev/null >/dev/null 2>&1; }
+uninst() { HOME="$IH" XDG_RUNTIME_DIR='' "$SUT_BASH" "$ROOT/uninstall.sh" "$@" </dev/null >/dev/null 2>&1; }
+fresh() { IH="$SANDBOX/ih-$1"; mkdir -p "$IH/.claude"; }
+nbak() { local f n=0; for f in "$IH/.claude/statusline.sh".bak.*; do [[ -f "$f" ]] && n=$((n+1)); done; echo "$n"; }
+
+fresh lines; inst -y -l 2
+grep -q 'STATUSLINE_LINES="${STATUSLINE_LINES:-2}"' "$IH/.claude/statusline.sh" && ok "install -l 2 sets 2-line mode" || bad "install -l 2 sets 2-line mode" "line not set"
+[[ "$(jq -r .statusLine.command "$IH/.claude/settings.json")" == *statusline.sh ]] && ok "install writes statusLine" || bad "install writes statusLine" "$(cat "$IH/.claude/settings.json")"
+
+fresh badl; inst -y -l 5 && bad "install -l 5 is rejected" "exit 0" || ok "install -l 5 is rejected"
+none "install -l 5 writes nothing" "$IH/.claude/statusline.sh"
+
+fresh upd; inst -y; sleep 1; inst -y; sleep 1; inst -y
+[[ "$(nbak)" == 0 ]] && ok "re-install keeps no backup of our own script" || bad "re-install keeps no backup of our own script" "$(nbak) backups"
+cp "$ROOT/statusline.sh" "$IH/.claude/statusline.sh.bak.1000000000"
+uninst -y
+none "uninstall after updates removes the script" "$IH/.claude/statusline.sh"
+[[ "$(nbak)" == 0 ]] && ok "uninstall drops backups of our own script" || bad "uninstall drops backups of our own script" "$(nbak) left"
+
+fresh keep; inst -y -l 2; inst -y
+grep -q '^STATUSLINE_LINES=2$' "$IH/.claude/statusline.conf" 2>/dev/null && ok "update without -l keeps saved line mode" || bad "update without -l keeps saved line mode" "$(cat "$IH/.claude/statusline.conf" 2>&1)"
+fresh foreign; printf '#!/bin/sh\necho mine\n' > "$IH/.claude/statusline.sh"; inst -y; sleep 1; inst -y
+[[ "$(nbak)" == 1 ]] && ok "foreign script is backed up once" || bad "foreign script is backed up once" "$(nbak) backups"
+uninst -y
+grep -q 'echo mine' "$IH/.claude/statusline.sh" 2>/dev/null && ok "uninstall restores the foreign script" || bad "uninstall restores the foreign script" "not restored"
 echo
-printf 'passed: %d  failed: %d\n' "$PASS" "$FAIL"
+printf 'passed: %d  failed: %d  skipped: %d   (bash under test: %s)\n' "$PASS" "$FAIL" "$SKIP" "$("$SUT_BASH" -c 'echo $BASH_VERSION')"
 (( FAIL == 0 ))
