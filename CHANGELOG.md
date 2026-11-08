@@ -21,6 +21,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and uninstall "restored" that copy. Now install backs up only a foreign script, and uninstall skips and deletes
   backups of our own versions (header marker `Claude Code Status Line v2`). Covered in `tests/run.sh`.
 
+### Changed
+
+- `.claude/settings.local.json` and `.codex` are no longer tracked; `.gitignore` added (also ignores `.tmp/`).
+  Before, a personal permission allowlist was copied into every plugin install.
+- `docs/contributing.md`: plugin updates need a `version` bump in `.claude-plugin/plugin.json`.
+
 ## [Unreleased] - 2026-10-04
 
 ### Added

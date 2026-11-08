@@ -428,8 +428,8 @@ mode=$(stat -c %a "$XR/claude-statusline" 2>/dev/null || echo none)
 
 echo "== installers =="
 # Each case gets a fresh HOME; installers run without a TTY, as under Claude's Bash tool.
-inst() { HOME="$IH" XDG_RUNTIME_DIR= STATUSLINE_REFRESH_INTERVAL=0 bash "$ROOT/install.sh" "$@" </dev/null >/dev/null 2>&1; }
-uninst() { HOME="$IH" XDG_RUNTIME_DIR= bash "$ROOT/uninstall.sh" "$@" </dev/null >/dev/null 2>&1; }
+inst() { HOME="$IH" XDG_RUNTIME_DIR='' STATUSLINE_REFRESH_INTERVAL=0 bash "$ROOT/install.sh" "$@" </dev/null >/dev/null 2>&1; }
+uninst() { HOME="$IH" XDG_RUNTIME_DIR='' bash "$ROOT/uninstall.sh" "$@" </dev/null >/dev/null 2>&1; }
 fresh() { IH="$SANDBOX/ih-$1"; mkdir -p "$IH/.claude"; }
 nbak() { local f n=0; for f in "$IH/.claude/statusline.sh".bak.*; do [[ -f "$f" ]] && n=$((n+1)); done; echo "$n"; }
 

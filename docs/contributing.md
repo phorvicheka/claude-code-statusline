@@ -11,3 +11,13 @@ To add a new element to the statusline:
 A renderer that can shrink to fit its row should be registered in `_is_flex()` and honour `_FLEX_BUDGET` (see `render_user_host`).
 
 See [configuration.md](configuration.md) for toggle and layout details, and [anatomy.md](anatomy.md) for the element reference and line layout structure.
+
+## Releasing a Plugin Update
+
+`/plugin update` compares only the `version` in `.claude-plugin/plugin.json`. A pushed commit without a version bump
+is never delivered to plugin users (tested 2026-11-08 on Claude Code 2.1.319: no bump left the cache at the old
+version; a bump to 2.0.1 installed a new `2.0.1/` cache directory). So for every user-visible change:
+
+1. Bump `version` in `.claude-plugin/plugin.json` (semver).
+2. Add the CHANGELOG entry.
+3. Users then run `/plugin update adaptive-statusline@phorvicheka` and `/adaptive-statusline:install`.

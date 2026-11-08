@@ -1,0 +1,4 @@
+# Local scratch, reports and per-user tool state
+.tmp/
+.claude/settings.local.json
+.codex
