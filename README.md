@@ -16,7 +16,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 - **Session info**: Cost, duration, lines changed, rate limits, worktree, prompt-cache warm/cold + TTL, gateway spend limit, fast-mode ⚡ badge
 - **Settings group** (`settings:`): Thinking, effort, and advisor grouped on L3 in 3-line mode
 - **Output group** (`output:`): Output style and caveman mode grouped on L3 in 3-line mode
-- **Cross-platform**: Works on Linux, macOS, WSL, and Windows (Git Bash)
+- **Cross-platform**: Linux, macOS (stock bash 3.2) and Windows (Git Bash) tested in CI; WSL2 Ubuntu tested locally
 - **Pure bash + jq**: No additional dependencies
 - **Tested**: `bash tests/run.sh` feeds crafted payloads (xhigh effort, Haiku, legacy shapes, hostile values, worktrees, widths) through the script
 
@@ -121,15 +121,17 @@ The plugin install was tested on Claude Code 2.1.319. Older versions without plu
 
 ### Platform Notes
 
-Every push and PR runs `tests/ci.sh` on all three OSes ([workflow](.github/workflows/test.yml)). Run the same check
-locally with `bash tests/ci.sh --fresh`.
+Every push and PR runs `tests/ci.sh` on all three OSes ([workflow](.github/workflows/test.yml)): shellcheck,
+`bash -n`, and `tests/run.sh`, which feeds crafted Claude Code JSON through the scripts. Run the same check locally
+with `bash tests/ci.sh --fresh`. CI tests the scripts, not a live Claude Code session on each OS. On Windows, 3
+symlink and POSIX-mode cases are skipped, because Git Bash has neither.
 
 | Platform | Status | Tested by | Notes |
 |----------|--------|-----------|-------|
-| Linux | PLATFORM_LINUX | CI `ubuntu-latest` | Native environment |
+| Linux | Tested (CI) | CI `ubuntu-latest` | Native environment |
 | WSL (Ubuntu) | Tested locally | `tests/ci.sh` on WSL2 Ubuntu | Handles Windows backslash paths (`C:\Users\...`) sent by Claude Code |
-| macOS | PLATFORM_MAC | CI `macos-latest`, stock `/bin/bash` 3.2 | BSD `date`/`stat`/`grep`, `tail -r` instead of `tac` |
-| Windows | PLATFORM_WIN | CI `windows-latest`, Git Bash | Requires [Git for Windows](https://gitforwindows.org/): Claude Code runs status line commands through Git Bash, and falls back to PowerShell without it, which cannot run this script. The installer writes a `C:/Users/...` path. `stty size` may fail (defaults to 80 cols / compact tier) |
+| macOS | Tested (CI) | CI `macos-latest`, stock `/bin/bash` 3.2 | BSD `date`/`stat`/`grep`, `tail -r` instead of `tac` |
+| Windows | Tested (CI) | CI `windows-latest`, Git Bash | Requires [Git for Windows](https://gitforwindows.org/): Claude Code runs status line commands through Git Bash, and falls back to PowerShell without it, which cannot run this script. The installer writes a `C:/Users/...` path. `stty size` may fail (defaults to 80 cols / compact tier) |
 
 Claude Code may send working directory paths with backslashes on Windows. The statusline normalizes all path separators automatically -- folder names, git operations, and settings lookups all work regardless of separator style.
 
