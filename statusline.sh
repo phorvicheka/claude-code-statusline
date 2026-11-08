@@ -304,9 +304,10 @@ _detect_worktree() {
     git_dir=$(git -C "$dir" rev-parse --git-dir 2>/dev/null) || return
     common_dir=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null) || return
 
-    # Normalize to absolute paths for comparison
-    git_dir=$(cd "$dir" && cd "$git_dir" && pwd)
-    common_dir=$(cd "$dir" && cd "$common_dir" && pwd)
+    # Normalize to absolute physical paths: git may print a symlink-resolved --git-dir
+    # (/private/var/... on macOS) while a relative --git-common-dir resolves logically.
+    git_dir=$(cd "$dir" && cd "$git_dir" && pwd -P)
+    common_dir=$(cd "$dir" && cd "$common_dir" && pwd -P)
 
     [[ "$git_dir" == "$common_dir" ]] && return  # not a linked worktree
 
@@ -828,8 +829,8 @@ get_git_info() {
             _git_dir=$(git -C "$dir" rev-parse --git-dir 2>/dev/null)
             _common_dir=$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)
             if [[ -n "$_git_dir" && -n "$_common_dir" ]]; then
-                _git_dir=$(cd "$dir" && cd "$_git_dir" && pwd)
-                _common_dir=$(cd "$dir" && cd "$_common_dir" && pwd)
+                _git_dir=$(cd "$dir" && cd "$_git_dir" && pwd -P)
+                _common_dir=$(cd "$dir" && cd "$_common_dir" && pwd -P)
             fi
             if [[ "$_git_dir" != "$_common_dir" ]]; then
                 local _my_head _wt_path="" _wt_head="" _wt_branch=""

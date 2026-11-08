@@ -20,7 +20,10 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) IS_WIN=true ;; *) IS_WIN=false ;; es
 # Any UTF-8 locale for character counting: C.utf8 on Linux, en_US.UTF-8 on macOS.
 UTF8_LOCALE=$(locale -a 2>/dev/null | grep -iE '^(c|en_us)\.utf-?8$' | head -1)
 
-SANDBOX="$(mktemp -d)"
+# Short, symlink-free sandbox: macOS $TMPDIR is long (/var/folders/...) and /var is a symlink to /private/var.
+SANDBOX="$(cd "$(mktemp -d /tmp/sl.XXXXXX)" && pwd -P)"
+# On Windows, Claude Code sends Windows paths and git prints C:/... ones: use that form throughout.
+$IS_WIN && SANDBOX="$(cygpath -m "$SANDBOX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 export HOME="$SANDBOX/home"
 mkdir -p "$HOME/.claude" "$SANDBOX/cache"
@@ -112,15 +115,15 @@ render '.rate_limits={five_hour:{used_percentage:38,resets_at:4102444800},seven_
 has   "both windows present render both" "5h "
 has   "7d renders when present" "7d "
 render '.rate_limits={seven_day:{used_percentage:18,resets_at:4102444800}}'
-hasnt "5h hidden when 7d loaded but no 5h window" "5h"
+hasnt "5h hidden when 7d loaded but no 5h window" "5h "
 has   "7d still shown" "7d "
 render '.'
 has   "no rate_limits yet keeps 5h placeholder" "5h --"
 has   "no rate_limits yet keeps 7d placeholder" "7d --"
 render '.rate_limits={five_hour:{used_percentage:5,resets_at:4102444800}}'
-hasnt "7d hidden when 5h loaded but no 7d window" "7d"
+hasnt "7d hidden when 5h loaded but no 7d window" "7d "
 render '.rate_limits={spend_limit:{used_percentage:5,used_usd:1,limit_usd:20,period:"month"}}'
-hasnt "7d hidden when only spend limit present" "7d"
+hasnt "7d hidden when only spend limit present" "7d "
 
 echo "── legacy payloads (older Claude Code) ──"
 render 'del(.effort,.thinking,.fast_mode) | .effort_level="medium"'
@@ -206,7 +209,7 @@ render ".prompt_cache={warm:false,caching_observed:true,ttl:\"5m\",expires_at:nu
 has   "cold prompt cache shown as cold" "cold"
 render '.';                hasnt "no prompt_cache → no cache badge" "cache:"
 render ".rate_limits={five_hour:{used_percentage:71,resets_at:$((NOW+3600))},seven_day:{used_percentage:76,resets_at:$((NOW+86400))}}"
-has   "5h/7d rate limits still render" "5h"
+has   "5h/7d rate limits still render" "5h "
 render ".rate_limits.spend_limit={used_percentage:24,resets_at:$((NOW+86400*3)),used_usd:12.5,limit_usd:50,period:\"weekly\"}"
 has   "spend_limit renders" "spend"
 has   "spend_limit shows 24%" "24%"
@@ -227,7 +230,7 @@ render '.'
 has   "cwd shown after user@host" "@"
 has   "cwd path shown" "$REPO"
 render ".cwd=\"$WT\" | .workspace.current_dir=\"$WT\" | .workspace.git_worktree=\"wt-feature\""
-n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l)
+n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l | tr -d " ")
 [[ "$n" == "1" ]] && ok "worktree path not duplicated by cwd on host row" || bad "worktree path not duplicated by cwd on host row" "path appears $n times"
 
 echo "── cwd drift: anchor + ▸marker, stable split ──"
@@ -303,7 +306,7 @@ render "$(at "$SUB") | .workspace.git_worktree=\"wt-feature\""
 has   "worktree subdir: wt row shows the worktree ROOT"  "path:$WT"
 hasnt "worktree subdir: wt row does not show the subdir" "path:$SUB"
 has   "worktree subdir: L1 = worktree dir + ▸subdir"     "wt-feature ▸src/api"
-n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l)
+n=$(grep -o "$WT" <<<"$LAST_OUT" | wc -l | tr -d " ")
 [[ "$n" == "1" ]] && ok "worktree subdir: root path printed once (host row deduped)" || bad "worktree subdir: root path printed once" "appears $n times"
 # Captured real payload shape: launched in api-server, cwd inside its .worktrees/ dir.
 API="$SANDBOX/ghost/api-server"; GW="$API/.worktrees/feature-2026-04-27-rbac-permissions-authz"
@@ -311,7 +314,7 @@ API="$SANDBOX/ghost/api-server"; GW="$API/.worktrees/feature-2026-04-27-rbac-per
 TERM_WIDTH_OVERRIDE=225 render ".cwd=\"$GW\" | .workspace.current_dir=\"$GW\" | .workspace.project_dir=\"$API\" | .workspace.git_worktree=\"feature-2026-04-27-rbac-permissions-authz\""
 hasnt "real worktree payload: no marker (cwd is the worktree root)" "▸"
 [[ "$(head -1 <<<"$LAST_OUT")" == *"| feature-2026-04-27-rbac-permissions-authz" ]] && ok "real worktree payload: L1 shows the worktree dir" || bad "real worktree payload: L1 shows the worktree dir" "L1 = $(head -1 <<<"$LAST_OUT")"
-n=$(grep -o "$GW" <<<"$LAST_OUT" | wc -l)
+n=$(grep -o "$GW" <<<"$LAST_OUT" | wc -l | tr -d " ")
 [[ "$n" == "1" ]] && ok "real worktree payload: path printed once" || bad "real worktree payload: path printed once" "appears $n times"
 
 echo "── auto-compact limit (autoCompactWindow) ──"
@@ -360,7 +363,7 @@ echo '{"autoCompactWindow": 327000, "autoCompactEnabled": false}' > "$ACO/.claud
 render ".cwd=\"$ACO\" | .workspace.current_dir=\"$ACO\" | .workspace.project_dir=\"$ACO\""
 hasnt "autoCompactEnabled:false: no rescale" "⟲"
 TERM_WIDTH_OVERRIDE=100 render "$OPUS"
-maxw=$(awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
+maxw=$(LC_ALL="${UTF8_LOCALE:-C.UTF-8}" awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
 (( maxw <= 100 )) && ok "rescaled tail fits at 100 cols (max $maxw)" || bad "rescaled tail fits at 100 cols" "max line = $maxw"
 
 echo "── width ──"
@@ -369,7 +372,7 @@ nlines "narrow tier forces a single line" 1
 TERM_WIDTH_OVERRIDE=160 render '.'
 nlines "full tier renders 3 lines (non-worktree)" 3
 # No visible line may exceed TERM_WIDTH (wide glyph margin allowed: emoji count 2 cols)
-maxw=$(awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
+maxw=$(LC_ALL="${UTF8_LOCALE:-C.UTF-8}" awk '{ if (length($0) > m) m = length($0) } END { print m+0 }' <<<"$LAST_OUT")
 (( maxw <= 160 )) && ok "no line wider than TERM_WIDTH=160 (max $maxw)" || bad "no line wider than TERM_WIDTH=160" "max line = $maxw"
 LAST_OUT=$(base_json | env -u TERM_WIDTH COLUMNS=100 HOME="$HOME" USER=tester HOSTNAME=testhost STATUSLINE_CACHE_DIR="$SANDBOX/cache" "$SUT_BASH" "$SCRIPT" 2>/dev/null | strip)
 # At 100 columns user@host:path cannot share a row with settings/output: it splits onto
@@ -441,6 +444,19 @@ else
 fi
 [[ -n "$(ls -A "$XR/claude-statusline" 2>/dev/null)" ]] && ok "default cache dir is actually used" || bad "default cache dir is actually used" "empty"
 
+
+echo "── repo reached through a symlinked path is not a worktree ──"
+if $IS_WIN; then
+    skip "symlinked repo path" "Git Bash ln -s copies"
+else
+    ln -s "$SANDBOX/proj" "$SANDBOX/proj-link"
+    render "$(at "$SANDBOX/proj-link/main-repo/.claude/memory") | del(.workspace)"
+    hasnt "symlinked repo path: no worktree row" "wt: name:"
+fi
+
+echo "── custom output style label is lowercased (portable _lower, no \${x,,}) ──"
+render '.output_style.name="My-Custom_Style2"'
+has   "custom output style lowercased" "my-custom_style2"
 
 echo "== portability lint (static: macOS bash 3.2, BSD grep/sed, no tac) =="
 # Static evidence only; the macOS CI job runs the scripts under /bin/bash 3.2 for real.

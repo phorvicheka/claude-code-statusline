@@ -21,6 +21,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   helper. The transcript reader no longer uses `grep -P` or `tac`, which macOS lacks; it uses `grep -oE` + `sed -E`
   and `tail -r`. Before, the output style label and the advisor model hit "bad substitution", and `/effort`,
   `/advisor` and the `/rename` title were silently missing on macOS.
+- **False `wt:` row for a repo reached through a symlink.** `_detect_worktree` compared git's symlink-resolved
+  `--git-dir` with a logical `pwd`, so a plain repo under `/tmp` or `/var` on macOS, or under any symlinked
+  directory, showed as a linked worktree. Both sides now use `pwd -P`. Found by the macOS CI job.
 - **Windows: settings path.** On Git Bash the installer writes `bash C:/Users/.../statusline.sh` (via `cygpath -m`),
   the form the Claude Code docs ask for, instead of the MSYS path `/c/Users/...`.
 - `.gitattributes` keeps `*.sh` at LF on Windows checkouts.
