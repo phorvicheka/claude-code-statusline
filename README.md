@@ -4,6 +4,8 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ![Claude Code Statusline screenshot](docs/screenshot.png)
 
+<sub>3-line mode at 150 columns, rendered by `statusline.sh` from a sample Claude Code payload.</sub>
+
 ## What You Get
 
 - **3 display modes**: 1-line (compact), 2-line, or 3-line (default; grows to 4 rows inside a git worktree; version shown next to model on all modes)
