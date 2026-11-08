@@ -116,7 +116,8 @@ mkdir -p "$CLAUDE_DIR"
 # ------------------------------------------------------------------
 # 4. Backup existing statusline
 # ------------------------------------------------------------------
-if [[ -f "$TARGET" ]]; then
+# Back up only a foreign script; an older copy of ours needs no backup (uninstall would "restore" it).
+if [[ -f "$TARGET" ]] && ! head -n 5 -- "$TARGET" | grep -q 'Claude Code Status Line v2'; then
     backup="${TARGET}.bak.$(date +%s)"
     cp "$TARGET" "$backup"
     ok "Backed up existing statusline to ${backup}"

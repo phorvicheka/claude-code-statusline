@@ -425,6 +425,32 @@ mode=$(stat -c %a "$XR/claude-statusline" 2>/dev/null || echo none)
 [[ "$mode" == "700" ]] && ok "default cache dir is created 0700 under XDG_RUNTIME_DIR" || bad "default cache dir is created 0700 under XDG_RUNTIME_DIR" "mode=$mode"
 [[ -n "$(ls -A "$XR/claude-statusline" 2>/dev/null)" ]] && ok "default cache dir is actually used" || bad "default cache dir is actually used" "empty"
 
+
+echo "== installers =="
+# Each case gets a fresh HOME; installers run without a TTY, as under Claude's Bash tool.
+inst() { HOME="$IH" XDG_RUNTIME_DIR= STATUSLINE_REFRESH_INTERVAL=0 bash "$ROOT/install.sh" "$@" </dev/null >/dev/null 2>&1; }
+uninst() { HOME="$IH" XDG_RUNTIME_DIR= bash "$ROOT/uninstall.sh" "$@" </dev/null >/dev/null 2>&1; }
+fresh() { IH="$SANDBOX/ih-$1"; mkdir -p "$IH/.claude"; }
+nbak() { local f n=0; for f in "$IH/.claude/statusline.sh".bak.*; do [[ -f "$f" ]] && n=$((n+1)); done; echo "$n"; }
+
+fresh lines; inst -y -l 2
+grep -q 'STATUSLINE_LINES="${STATUSLINE_LINES:-2}"' "$IH/.claude/statusline.sh" && ok "install -l 2 sets 2-line mode" || bad "install -l 2 sets 2-line mode" "line not set"
+[[ "$(jq -r .statusLine.command "$IH/.claude/settings.json")" == *statusline.sh ]] && ok "install writes statusLine" || bad "install writes statusLine" "$(cat "$IH/.claude/settings.json")"
+
+fresh badl; inst -y -l 5 && bad "install -l 5 is rejected" "exit 0" || ok "install -l 5 is rejected"
+none "install -l 5 writes nothing" "$IH/.claude/statusline.sh"
+
+fresh upd; inst -y; sleep 1; inst -y; sleep 1; inst -y
+[[ "$(nbak)" == 0 ]] && ok "re-install keeps no backup of our own script" || bad "re-install keeps no backup of our own script" "$(nbak) backups"
+cp "$ROOT/statusline.sh" "$IH/.claude/statusline.sh.bak.1000000000"
+uninst -y
+none "uninstall after updates removes the script" "$IH/.claude/statusline.sh"
+[[ "$(nbak)" == 0 ]] && ok "uninstall drops backups of our own script" || bad "uninstall drops backups of our own script" "$(nbak) left"
+
+fresh foreign; printf '#!/bin/sh\necho mine\n' > "$IH/.claude/statusline.sh"; inst -y; sleep 1; inst -y
+[[ "$(nbak)" == 1 ]] && ok "foreign script is backed up once" || bad "foreign script is backed up once" "$(nbak) backups"
+uninst -y
+grep -q 'echo mine' "$IH/.claude/statusline.sh" 2>/dev/null && ok "uninstall restores the foreign script" || bad "uninstall restores the foreign script" "not restored"
 echo
 printf 'passed: %d  failed: %d\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

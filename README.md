@@ -22,7 +22,7 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ## Quick Install
 
-### Plugin Install
+### Plugin Install (Recommended)
 
 In Claude Code:
 
@@ -37,7 +37,7 @@ mode, asks before replacing another tool's statusline, and copies the script to 
 After `/plugin update`, run `/adaptive-statusline:install` again: the installed copy does not update itself.
 `/adaptive-statusline:uninstall` removes it.
 
-### Setup via Claude Code (Recommended)
+### Setup via Claude Code Prompt
 
 **Install or update** -- paste this prompt into Claude Code:
 

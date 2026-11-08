@@ -15,6 +15,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `install.sh -l 1|2|3` picks the line mode without a prompt. `uninstall.sh -y` runs without a prompt and restores
   the newest backup. Both are needed where there is no TTY, such as Claude's Bash tool.
 
+### Fixed
+
+- **Uninstall after an update left the statusline in place.** Every re-install backed up our own previous script,
+  and uninstall "restored" that copy. Now install backs up only a foreign script, and uninstall skips and deletes
+  backups of our own versions (header marker `Claude Code Status Line v2`). Covered in `tests/run.sh`.
+
 ## [Unreleased] - 2026-10-04
 
 ### Added

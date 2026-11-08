@@ -30,14 +30,19 @@ info() { printf "${CYAN}[INFO]${RESET}  %s\n" "$1"; }
 ok()   { printf "${GREEN}[OK]${RESET}    %s\n" "$1"; }
 warn() { printf "${YELLOW}[WARN]${RESET}  %s\n" "$1"; }
 
-# Find most recent backup
+# Our own script carries this header; a backup of it is an older copy of us, not the user's original.
+is_ours() { head -n 5 -- "$1" 2>/dev/null | grep -q 'Claude Code Status Line v2'; }
+
+# Newest backup that is NOT ours (glob order = timestamp order; the suffix is epoch seconds)
 latest_backup=""
+own_backups=()
 for f in "${TARGET}".bak.*; do
-    [[ -f "$f" ]] && latest_backup="$f"
+    [[ -f "$f" ]] || continue
+    if is_ours "$f"; then own_backups+=("$f"); else latest_backup="$f"; fi
 done
 
 if [[ -n "$latest_backup" ]]; then
-    info "Found backup: ${latest_backup}"
+    info "Found backup of your previous statusline: ${latest_backup}"
     if [[ "$AUTO_YES" == true ]]; then
         restore="y"
     else
@@ -52,7 +57,12 @@ if [[ -n "$latest_backup" ]]; then
     fi
 else
     rm -f "$TARGET"
-    ok "Removed statusline.sh (no backup found)"
+    ok "Removed statusline.sh (no backup of a previous statusline found)"
+fi
+
+if (( ${#own_backups[@]} > 0 )); then
+    rm -f -- "${own_backups[@]}"
+    ok "Removed ${#own_backups[@]} backup(s) of this statusline's older versions"
 fi
 
 # Clean cache
