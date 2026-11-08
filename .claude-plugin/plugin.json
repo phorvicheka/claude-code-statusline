@@ -1,0 +1,10 @@
+{
+  "name": "adaptive-statusline",
+  "version": "2.0.0",
+  "description": "Multi-line, adaptive-width Claude Code status line: model, context bar, git and PR state, rate limits, cost, worktrees. Pure bash + jq.",
+  "author": { "name": "phorvicheka", "url": "https://github.com/phorvicheka" },
+  "homepage": "https://github.com/phorvicheka/claude-code-statusline",
+  "repository": "https://github.com/phorvicheka/claude-code-statusline",
+  "license": "MIT",
+  "keywords": ["statusline", "status-line", "git", "context", "rate-limits"]
+}

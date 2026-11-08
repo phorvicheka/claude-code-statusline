@@ -12,6 +12,15 @@ else
 fi
 LEGACY_CACHE_DIR="/tmp/claude-statusline"
 
+# -y: no prompts (restore the latest backup if one exists); needed when there is no TTY
+AUTO_YES=false
+while getopts "y" opt; do
+    case "$opt" in
+        y) AUTO_YES=true ;;
+        *) echo "Usage: uninstall.sh [-y]" >&2; exit 1 ;;
+    esac
+done
+
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
@@ -29,7 +38,11 @@ done
 
 if [[ -n "$latest_backup" ]]; then
     info "Found backup: ${latest_backup}"
-    read -rp "Restore this backup? [Y/n]: " restore
+    if [[ "$AUTO_YES" == true ]]; then
+        restore="y"
+    else
+        read -rp "Restore this backup? [Y/n]: " restore
+    fi
     if [[ ! "$restore" =~ ^[Nn] ]]; then
         cp "$latest_backup" "$TARGET"
         ok "Restored ${latest_backup} -> ${TARGET}"

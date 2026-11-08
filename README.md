@@ -22,6 +22,21 @@ A multi-line, adaptive-width status line for Claude Code with configurable eleme
 
 ## Quick Install
 
+### Plugin Install
+
+In Claude Code:
+
+```
+/plugin marketplace add phorvicheka/claude-code-statusline
+/plugin install adaptive-statusline@phorvicheka
+/adaptive-statusline:install
+```
+
+Plugins cannot set `statusLine` themselves, so `/adaptive-statusline:install` runs `install.sh`. It asks for the line
+mode, asks before replacing another tool's statusline, and copies the script to `~/.claude/statusline.sh`.
+After `/plugin update`, run `/adaptive-statusline:install` again: the installed copy does not update itself.
+`/adaptive-statusline:uninstall` removes it.
+
 ### Setup via Claude Code (Recommended)
 
 **Install or update** -- paste this prompt into Claude Code:
@@ -58,6 +73,7 @@ Please check https://github.com/phorvicheka/claude-code-statusline, read the REA
 cd /path/to/statusline-package
 bash install.sh -y     # recommended: non-interactive, 3-line default, auto-update
 bash install.sh        # interactive: choose line count, confirm overwrites
+bash install.sh -y -l 2  # non-interactive, 2-line mode
 ```
 
 The installer will:
@@ -165,3 +181,7 @@ See [Contributing: Adding New Elements](docs/contributing.md). Run `bash tests/r
 - [Claude Code Statusline Documentation](https://code.claude.com/docs/en/statusline)
 - [isaacaudet/claude-code-statusline](https://github.com/isaacaudet/claude-code-statusline)
 - [sirmalloc/ccstatusline](https://github.com/sirmalloc/ccstatusline)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

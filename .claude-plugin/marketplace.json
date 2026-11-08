@@ -1,0 +1,11 @@
+{
+  "name": "phorvicheka",
+  "owner": { "name": "phorvicheka", "url": "https://github.com/phorvicheka" },
+  "plugins": [
+    {
+      "name": "adaptive-statusline",
+      "source": "./",
+      "description": "Multi-line, adaptive-width Claude Code status line with git, PR, context and rate-limit info."
+    }
+  ]
+}

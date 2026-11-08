@@ -22,12 +22,17 @@ REFRESH_INTERVAL="${STATUSLINE_REFRESH_INTERVAL:-60}"
 
 # Flags
 AUTO_YES=false
-while getopts "y" opt; do
+LINES_ARG=""
+while getopts "yl:" opt; do
     case "$opt" in
         y) AUTO_YES=true ;;
-        *) echo "Usage: install.sh [-y]" >&2; exit 1 ;;
+        l) LINES_ARG="$OPTARG" ;;
+        *) echo "Usage: install.sh [-y] [-l 1|2|3]" >&2; exit 1 ;;
     esac
 done
+if [[ -n "$LINES_ARG" && ! "$LINES_ARG" =~ ^[123]$ ]]; then
+    echo "install.sh: -l must be 1, 2 or 3 (got '$LINES_ARG')" >&2; exit 1
+fi
 shift $((OPTIND - 1))
 
 # Detect install vs update
@@ -80,7 +85,9 @@ ok "Dependencies satisfied (bash ${BASH_VERSION}, jq $(jq --version 2>&1), git)"
 # ------------------------------------------------------------------
 # 2. Choose line count
 # ------------------------------------------------------------------
-if [[ "$AUTO_YES" == true ]]; then
+if [[ -n "$LINES_ARG" ]]; then
+    line_choice="$LINES_ARG"
+elif [[ "$AUTO_YES" == true ]]; then
     line_choice=3
     ok "Auto mode: using default 3-line mode"
 else

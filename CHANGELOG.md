@@ -3,6 +3,18 @@
 All notable changes to this statusline. The project has no tagged releases; entries are grouped by date.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] - 2026-11-08
+
+### Added
+
+- **MIT license.** The repo had no license, so reuse was legally all-rights-reserved.
+- **Claude Code plugin.** `.claude-plugin/` makes the repo its own marketplace (`phorvicheka`) with the plugin
+  `adaptive-statusline`. Skills `/adaptive-statusline:install` and `:uninstall` run the bundled scripts, because plugins
+  cannot set `statusLine`. The script still lands at `~/.claude/statusline.sh`, since the plugin directory changes
+  on every update.
+- `install.sh -l 1|2|3` picks the line mode without a prompt. `uninstall.sh -y` runs without a prompt and restores
+  the newest backup. Both are needed where there is no TTY, such as Claude's Bash tool.
+
 ## [Unreleased] - 2026-10-04
 
 ### Added
